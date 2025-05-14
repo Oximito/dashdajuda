@@ -20,7 +20,7 @@ export interface CardapioItem {
 
 const categoriasDefinidas = [
   "Marmita do Dia",
-  "Marmita Clássica",
+  "Marmita Clássica", "Omeletes",
   "Mix de Salada",
   "Bebida",
   "Adicional",

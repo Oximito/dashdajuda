@@ -361,11 +361,13 @@ function App() {
             ))}
           </div>
 
-          {/* Modal de Edição */}
+          {/* Modal de Edição - AJUSTADO COM FOOTER FIXO */}
           {isEditModalOpen && currentPedido && (
             <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-              <div className="bg-white p-6 sm:p-8 rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
-                <div className="flex justify-between items-center mb-6">
+              {/* Container do Modal com altura máxima e flex col */}
+              <div className="bg-white p-0 rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden">
+                {/* Cabeçalho Fixo */}
+                <div className="flex justify-between items-center p-6 sm:p-8 border-b border-gray-200 flex-shrink-0">
                   <h3 className="text-xl sm:text-2xl font-semibold text-gray-800">Editar Comanda</h3>
                   <button 
                     onClick={() => setIsEditModalOpen(false)}
@@ -375,8 +377,8 @@ function App() {
                   </button>
                 </div>
                 
-                {/* Formulário de Edição */}
-                <div className="flex-grow overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100 space-y-4">
+                {/* Área de Scroll para o Formulário */}
+                <div className="flex-grow overflow-y-auto p-6 sm:p-8 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100 space-y-4">
                   <div>
                     <label htmlFor="nome_cliente" className="block text-sm font-medium text-gray-700 mb-1">Nome do Cliente</label>
                     <input 
@@ -385,7 +387,7 @@ function App() {
                       name="nome_cliente" 
                       value={editedPedido.nome_cliente || ''} 
                       onChange={handleEditInputChange}
-                      className="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-1 focus:ring-pink-500 focus:border-pink-500 transition-colors"
+                      className="w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-300 focus:border-pink-400 transition-colors"
                     />
                   </div>
                   
@@ -397,7 +399,7 @@ function App() {
                       value={editedPedido.comanda || ''} 
                       onChange={handleEditInputChange}
                       rows={5}
-                      className="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-1 focus:ring-pink-500 focus:border-pink-500 transition-colors"
+                      className="w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-300 focus:border-pink-400 transition-colors"
                     />
                   </div>
                   
@@ -408,8 +410,8 @@ function App() {
                       name="status_pedido" 
                       value={editedPedido.status_pedido || ''} 
                       onChange={handleEditInputChange}
-                      className="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-1 focus:ring-pink-500 focus:border-pink-500 transition-colors appearance-none bg-white bg-no-repeat bg-right pr-8"
-                      style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns=\'http://www.w3.org/2000/svg\\\' fill=\'none\\\' viewBox=\'0 0 20 20\'%3e%3cpath stroke=\'%236b7280\\' stroke-linecap=\'round\\' stroke-linejoin=\'round\\' stroke-width=\'1.5\\' d=\'M6 8l4 4 4-4\'/\%3e%3c/svg%3e")`}}
+                      className="w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-300 focus:border-pink-400 transition-colors appearance-none bg-white bg-no-repeat bg-right pr-8"
+                      style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`}}
                     >
                       {statusOptions.map(option => (
                         <option key={option} value={option}>{option}</option>
@@ -424,8 +426,8 @@ function App() {
                       name="pagamento" 
                       value={editedPedido.pagamento || ''} 
                       onChange={handleEditInputChange}
-                      className="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-1 focus:ring-pink-500 focus:border-pink-500 transition-colors appearance-none bg-white bg-no-repeat bg-right pr-8"
-                      style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns=\'http://www.w3.org/2000/svg\\\' fill=\'none\\\' viewBox=\'0 0 20 20\'%3e%3cpath stroke=\'%236b7280\\' stroke-linecap=\'round\\' stroke-linejoin=\'round\\' stroke-width=\'1.5\\' d=\'M6 8l4 4 4-4\'/\%3e%3c/svg%3e")`}}
+                      className="w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-300 focus:border-pink-400 transition-colors appearance-none bg-white bg-no-repeat bg-right pr-8"
+                      style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`}}
                     >
                       {pagamentoOptions.map(option => (
                         <option key={option} value={option}>{option}</option>
@@ -434,23 +436,23 @@ function App() {
                   </div>
                 </div>
                 
-                {/* Botões do Modal */}
-                <div className="mt-6 pt-4 border-t border-gray-200 flex justify-end space-x-3 flex-shrink-0">
+                {/* Rodapé Fixo com Botões */}
+                <div className="p-6 sm:p-8 border-t border-gray-200 flex justify-end space-x-3 flex-shrink-0 bg-gray-50">
                   <button 
                     type="button"
                     onClick={() => setIsEditModalOpen(false)} 
                     disabled={saving}
-                    className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg transition-colors flex items-center"
+                    className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg transition-colors flex items-center focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-1"
                   >
-                     <XCircle size={18} className="mr-1"/> Cancelar
+                     <XCircle size={18} className="mr-1.5"/> Cancelar
                   </button>
                   <button 
                     type="button"
                     onClick={handleSaveEdit} 
                     disabled={saving}
-                    className="px-4 py-2 bg-pink-500 hover:bg-pink-600 text-white rounded-lg shadow transition-colors flex items-center"
+                    className="px-4 py-2 bg-pink-500 hover:bg-pink-600 text-white rounded-lg shadow transition-colors flex items-center focus:outline-none focus:ring-2 focus:ring-pink-400 focus:ring-offset-1"
                   >
-                    {saving ? <Loader2 size={18} className="mr-1 animate-spin"/> : <Save size={18} className="mr-1"/>}
+                    {saving ? <Loader2 size={18} className="mr-1.5 animate-spin"/> : <Save size={18} className="mr-1.5"/>}
                     {saving ? 'Salvando...' : 'Salvar Alterações'}
                   </button>
                 </div>
@@ -458,7 +460,7 @@ function App() {
             </div>
           )}
 
-          {/* Modal de Exclusão (Estilo Aprovado) */}
+          {/* Modal de Exclusão (Estilo Aprovado - Mantido) */}
           {isDeleteModalOpen && currentPedido && (
             <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
               <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md">
@@ -471,11 +473,11 @@ function App() {
                     </p>
                 </div>
                 <div className="flex justify-center space-x-4">
-                  <button onClick={() => setIsDeleteModalOpen(false)} disabled={saving} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg transition-colors">
+                  <button onClick={() => setIsDeleteModalOpen(false)} disabled={saving} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-1">
                     Cancelar
                   </button>
-                  <button onClick={handleDeletePedido} disabled={saving} className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg shadow transition-colors flex items-center">
-                    {saving ? <Loader2 size={18} className="mr-1 animate-spin"/> : <Trash2 size={18} className="mr-1"/>}
+                  <button onClick={handleDeletePedido} disabled={saving} className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg shadow transition-colors flex items-center focus:outline-none focus:ring-2 focus:ring-red-400 focus:ring-offset-1">
+                    {saving ? <Loader2 size={18} className="mr-1.5 animate-spin"/> : <Trash2 size={18} className="mr-1.5"/>}
                     {saving ? 'Removendo...' : 'Confirmar Remoção'}
                   </button>
                 </div>

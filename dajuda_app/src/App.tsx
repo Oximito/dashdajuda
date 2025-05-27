@@ -3,7 +3,7 @@ import "./App.css";
 import { supabase } from "./supabaseClient";
 import ComandaCard, { Pedido } from "./components/ComandaCard";
 import CardapioPage from "./components/CardapioPage"; // Nova página do Cardápio
-import type { RealtimeChannel, RealtimePostgresChangesPayload } from "@supabase/supabase-js";
+import { useSupabaseRealtime } from "./hooks/useSupabaseRealtime";
 
 const notificationSound = "/assets/sounds/notify.mp3";
 
@@ -14,7 +14,6 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [newPedidoKeys, setNewPedidoKeys] = useState<Set<string>>(new Set());
   const audioPlayer = useRef<HTMLAudioElement | null>(null);
-  const channelRef = useRef<RealtimeChannel | null>(null);
   const [currentView, setCurrentView] = useState<View>("comandas"); // Estado para controlar a visualização atual
 
   const playNotificationSound = () => {
@@ -57,73 +56,63 @@ function App() {
     }
   };
 
+  // Realtime connection for Comandas
+  const {
+    error: realtimeError,
+    connectionStatus,
+    forceReconnect,
+    isConnected
+  } = useSupabaseRealtime({
+    table: "Comandas",
+    enabled: currentView === "comandas",
+    onChange: (payload) => {
+      console.log("Mudança recebida do Supabase Realtime (Comandas)!", payload);
+      if (payload.eventType === "INSERT" && payload.new.telefone_key) {
+        if (!pedidos.find(p => p.telefone_key === payload.new.telefone_key)){
+            fetchPedidos(true, payload.new.telefone_key as string);
+        } else {
+            fetchPedidos(); 
+        }
+      } else {
+        fetchPedidos();
+      }
+    }
+  });
+
   useEffect(() => {
     if (currentView === "comandas") {
         fetchPedidos();
-
-        const handleChanges = (payload: RealtimePostgresChangesPayload<{[key: string]: any}>) => {
-          console.log("Mudança recebida do Supabase Realtime (Comandas)!", payload);
-          if (payload.eventType === "INSERT" && payload.new.telefone_key) {
-            if (!pedidos.find(p => p.telefone_key === payload.new.telefone_key)){
-                fetchPedidos(true, payload.new.telefone_key as string);
-            } else {
-                fetchPedidos(); 
-            }
-          } else {
-            fetchPedidos();
-          }
-        };
-
-        channelRef.current = supabase
-          .channel("comandas_realtime_channel")
-          .on(
-            "postgres_changes",
-            { event: "*", schema: "public", table: "Comandas" },
-            handleChanges
-          )
-          .subscribe((status: "SUBSCRIBED" | "TIMED_OUT" | "CLOSED" | "CHANNEL_ERROR", err?: Error) => {
-            if (status === "SUBSCRIBED") {
-              console.log("Conectado ao canal Realtime do Supabase (Comandas)!");
-            } else if (status === "CHANNEL_ERROR") {
-              console.error("Erro no canal Realtime do Supabase (Comandas):", err);
-              setError(`Erro de conexão em tempo real (Comandas): ${err?.message || "Erro desconhecido"}`);
-            } else if (status === "TIMED_OUT") {
-              console.warn("Timeout na conexão Realtime do Supabase (Comandas).");
-              setError("Conexão em tempo real (Comandas) expirou. Tente atualizar manualmente.");
-            } else if (status === "CLOSED"){
-              console.log("Canal Realtime (Comandas) fechado.")
-            }
-          });
-
+        
+        // Initialize audio player
         audioPlayer.current = new Audio(notificationSound);
         audioPlayer.current.load();
-
-        return () => {
-          if (channelRef.current) {
-            supabase.removeChannel(channelRef.current).then(status => console.log("Canal Realtime (Comandas) removido, status:", status)).catch(console.error);
-            channelRef.current = null;
-          }
-        };
     } else {
-        // Lógica para quando a view for 'cardapio', se necessário desativar o canal de comandas
-        if (channelRef.current) {
-            supabase.removeChannel(channelRef.current).then(status => console.log("Canal Realtime (Comandas) removido ao mudar de view, status:", status)).catch(console.error);
-            channelRef.current = null;
-        }
-        setError(null); // Limpar erros de comandas ao mudar de view
+        // Clear errors when switching views
+        setError(null); 
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentView]); // Adicionado currentView como dependência
+
+  // Update error state based on realtime connection
+  useEffect(() => {
+    if (currentView === "comandas") {
+      setError(realtimeError);
+    }
+  }, [realtimeError, currentView]);
 
   const handlePedidoUpdate = () => {
     console.log("Atualização de pedido individual concluída, re-buscando todos os pedidos para manter a ordem.");
     fetchPedidos();
   };
 
+  const handlePedidoDelete = () => {
+    console.log("Pedido excluído, re-buscando todos os pedidos.");
+    fetchPedidos();
+  };
+
   return (
     <div className="p-6 bg-gray-50 min-h-screen font-sans">
       <header className="mb-10">
-        <h1 className="text-5xl font-bold text-center text-custom-pink">D’Ajuda Refeições</h1>
+        <h1 className="text-5xl font-bold text-center text-custom-pink">D'Ajuda Refeições</h1>
         <nav className="mt-4 mb-6 flex justify-center space-x-6">
           <button 
             onClick={() => setCurrentView("comandas")} 
@@ -148,17 +137,43 @@ function App() {
         {currentView === "cardapio" && <p className="text-2xl text-center text-gray-600 mt-2">Gerenciamento do Cardápio</p>}
       </header>
 
-      {error && <p className="text-red-600 text-center mb-6 p-4 bg-red-100 rounded-lg shadow">{error}</p>}
+      {error && (
+        <div className="text-red-600 text-center mb-6 p-4 bg-red-100 rounded-lg shadow flex items-center justify-between">
+          <span>{error}</span>
+          {currentView === "comandas" && !isConnected && (
+            <button 
+              onClick={forceReconnect}
+              className="ml-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition-colors text-sm"
+            >
+              Reconectar
+            </button>
+          )}
+        </div>
+      )}
       
       {currentView === "comandas" && (
         <>
-          <div className="text-center mb-8">
+          <div className="text-center mb-8 flex justify-center items-center space-x-4">
             <button 
               onClick={() => fetchPedidos()} 
               className="px-7 py-3 bg-custom-pink text-white rounded-xl shadow-md hover:bg-pink-700 transition-colors focus:outline-none focus:ring-2 focus:ring-pink-500 focus:ring-opacity-60 text-lg font-medium"
             >
               Atualizar Pedidos Manualmente
             </button>
+            
+            {/* Connection status indicator */}
+            <div className="flex items-center space-x-2">
+              <div className={`w-3 h-3 rounded-full ${
+                connectionStatus === 'connected' ? 'bg-green-500' : 
+                connectionStatus === 'connecting' ? 'bg-yellow-500' : 
+                'bg-red-500'
+              }`}></div>
+              <span className="text-sm text-gray-600">
+                {connectionStatus === 'connected' ? 'Conectado' : 
+                 connectionStatus === 'connecting' ? 'Conectando...' : 
+                 'Desconectado'}
+              </span>
+            </div>
           </div>
 
           {pedidos.length === 0 && !error && (
@@ -174,6 +189,7 @@ function App() {
                 key={pedido.telefone_key} 
                 pedido={pedido} 
                 onUpdate={handlePedidoUpdate} 
+                onDelete={handlePedidoDelete}
                 isNew={newPedidoKeys.has(pedido.telefone_key)}
               />
             ))}
@@ -190,4 +206,3 @@ function App() {
 }
 
 export default App;
-

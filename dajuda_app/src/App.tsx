@@ -353,7 +353,6 @@ function App() {
               <ComandaCard 
                 key={pedido.telefone_key} 
                 pedido={pedido} 
-                onUpdate={handlePedidoUpdate} // Passa a função de busca para o card (caso necessário) 
                 isNew={newPedidoKeys.has(pedido.telefone_key)}
                 onEdit={() => openEditModal(pedido)}
                 onDelete={() => openDeleteModal(pedido)}

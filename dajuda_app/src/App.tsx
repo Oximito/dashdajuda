@@ -336,7 +336,7 @@ function App() {
             ))}
           </div>
 
-          {/* **CORREÇÃO: Modal de Edição de Comanda - Estilo e Usabilidade Melhorados** */}
+          {/* **REFORMULAÇÃO: Modal de Edição de Comanda - Estilo "Apple"** */}
           {isEditModalOpen && currentPedido && (
             <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
               <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg flex flex-col max-h-[90vh]">
@@ -347,9 +347,8 @@ function App() {
                 </div>
                 
                 {/* Conteúdo Rolável do Modal */}
-                <div className="p-6 overflow-y-auto flex-grow space-y-4"> {/* Adicionado space-y para espaçamento */}
+                <div className="p-6 overflow-y-auto flex-grow space-y-4"> 
                   <div>
-                    {/* **CORREÇÃO: Usando classes de estilo consistentes** */}
                     <label htmlFor="edit-nome_cliente" className="label-style">Nome do Cliente</label>
                     <input 
                       type="text" 
@@ -367,8 +366,7 @@ function App() {
                       name="comanda"
                       value={editedPedido.comanda || ''}
                       onChange={handleEditInputChange}
-                      rows={8} // Aumentado para melhor visualização
-                      className="input-field"
+                      className="input-field h-40 resize-none" // Altura fixa e sem resize
                     />
                   </div>
                   <div>
@@ -380,7 +378,9 @@ function App() {
                       onChange={handleEditInputChange}
                       className="input-field"
                     >
-                      {statusOptions.map(option => <option key={option} value={option}>{option}</option>)}
+                      {statusOptions.map(option => (
+                        <option key={option} value={option}>{option}</option>
+                      ))}
                     </select>
                   </div>
                   <div>
@@ -392,7 +392,9 @@ function App() {
                       onChange={handleEditInputChange}
                       className="input-field"
                     >
-                      {pagamentoOptions.map(option => <option key={option} value={option}>{option}</option>)}
+                      {pagamentoOptions.map(option => (
+                        <option key={option} value={option}>{option}</option>
+                      ))}
                     </select>
                   </div>
                 </div>
@@ -403,16 +405,15 @@ function App() {
                     type="button" 
                     onClick={() => setIsEditModalOpen(false)} 
                     disabled={saving}
-                    className="btn-secondary" // Usando classe de estilo global
+                    className="btn-secondary" // Usando classe global
                   >
                     <XCircle size={18} className="inline mr-1"/> Cancelar
                   </button>
-                  {/* **CORREÇÃO: Estilo do botão Salvar Alterações restaurado** */}
                   <button 
                     type="button" 
                     onClick={handleSaveEdit} 
                     disabled={saving}
-                    className="btn-primary bg-blue-600 hover:bg-blue-700" // Usando classe de estilo global (azul para salvar edição)
+                    className="btn-primary bg-blue-600 hover:bg-blue-700 focus:ring-blue-400" // Usando classe global, cor azul
                   >
                     {saving ? <Loader2 size={18} className="inline mr-1 animate-spin"/> : <Save size={18} className="inline mr-1"/>}
                     {saving ? 'Salvando...' : 'Salvar Alterações'}
@@ -422,33 +423,25 @@ function App() {
             </div>
           )}
 
-          {/* Modal de Confirmação de Exclusão - Estilo mantido */}
+          {/* Modal de Exclusão de Comanda - Estilo mantido */}
           {isDeleteModalOpen && currentPedido && (
             <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
               <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md">
                 <div className="text-center">
                     <AlertTriangle size={48} className="text-red-500 mx-auto mb-4" />
-                    <h3 className="text-xl font-semibold mb-3 text-gray-800">Confirmar Remoção</h3>
+                    <h3 className="text-xl font-semibold mb-3 text-gray-800">Confirmar Exclusão</h3>
                     <p className="text-gray-600 mb-6">
-                      Você tem certeza que deseja remover a comanda de "<strong>{currentPedido.nome_cliente || currentPedido.telefone_key}</strong>"?
+                      Você tem certeza que deseja excluir a comanda de "<strong>{currentPedido.nome_cliente || currentPedido.telefone_key}</strong>"?
                       <br/>Esta ação não poderá ser desfeita.
                     </p>
                 </div>
                 <div className="flex justify-center space-x-4">
-                  <button 
-                    onClick={() => setIsDeleteModalOpen(false)} 
-                    disabled={saving}
-                    className="btn-secondary"
-                  >
+                  <button onClick={() => setIsDeleteModalOpen(false)} disabled={saving} className="btn-secondary">
                     Cancelar
                   </button>
-                  <button 
-                    onClick={handleDeletePedido} 
-                    disabled={saving}
-                    className="btn-danger"
-                  >
+                  <button onClick={handleDeletePedido} disabled={saving} className="btn-danger">
                     {saving ? <Loader2 size={18} className="inline mr-1 animate-spin"/> : <Trash2 size={18} className="inline mr-1"/>}
-                    {saving ? 'Removendo...' : 'Confirmar Remoção'}
+                    {saving ? 'Excluindo...' : 'Confirmar Exclusão'}
                   </button>
                 </div>
               </div>
@@ -458,22 +451,10 @@ function App() {
       )}
 
       {/* Conteúdo da Aba Cardápio */}
-      {currentView === "cardapio" && (
-        <CardapioPage />
-      )}
-
+      {currentView === "cardapio" && <CardapioPage />}
     </div>
   );
 }
 
 export default App;
-
-// **Lembrete: Definir estilos globais em App.css**
-/*
-.label-style { @apply block text-sm font-medium text-gray-700 mb-1; }
-.input-field { @apply w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-300 focus:border-pink-400 text-sm transition-all duration-150; }
-.btn-primary { @apply px-4 py-2 bg-pink-600 hover:bg-pink-700 text-white rounded-lg shadow-md text-sm font-medium transition-all duration-150 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-pink-400 focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed; }
-.btn-secondary { @apply px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg shadow-sm text-sm font-medium transition-all duration-150 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed; }
-.btn-danger { @apply px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg shadow-md text-sm font-medium transition-all duration-150 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-red-400 focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed; }
-*/
 

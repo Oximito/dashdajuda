@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '../supabaseClient';
-import { PlusCircle, Save, XCircle, Trash2, Edit3, AlertTriangle, Loader2, CheckCircle, Info } from 'lucide-react'; // Added CheckCircle, Info
+import { PlusCircle, Save, XCircle, Trash2, Edit3, AlertTriangle, Loader2, Info } from 'lucide-react'; // Removed CheckCircle
 import type { RealtimeChannel } from "@supabase/supabase-js";
 
 // Interface para o item do cardápio

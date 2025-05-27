@@ -7,7 +7,7 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 export interface CardapioItem {
   id: number;
   categoria: string;
-  disponivel: 'Sim' | 'Não'; // Mudado para enum
+  disponivel: 'Sim' | 'Não';
   nome_produto: string;
   descricao_produto?: string | null;
   observacao?: string | null;
@@ -21,14 +21,14 @@ export interface CardapioItem {
   originalPromocoes?: string | null;
 }
 
-// Ordem correta das categorias
+// Ordem correta das categorias - CORRIGIDA
 const categoriasOrdenadas = [
   "Marmita do dia",
   "Marmita clássica",
   "Mix de salada",
-  "Bebida",
-  "Adicional",
-  "Unidade",
+  "Bebida", // Ajustado para singular se necessário, ou manter como no DB
+  "Adicional", // Ajustado para singular se necessário, ou manter como no DB
+  "Unidade", // Ajustado para singular se necessário, ou manter como no DB
 ];
 
 const CardapioPage: React.FC = () => {
@@ -44,12 +44,12 @@ const CardapioPage: React.FC = () => {
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectAttemptsRef = useRef<number>(0);
   const MAX_RECONNECT_ATTEMPTS = 5;
-  const RECONNECT_DELAY = 5000; // Aumentado para 5 segundos
+  const RECONNECT_DELAY = 5000;
 
   // Estado para o novo item
   const [novoItem, setNovoItem] = useState<Partial<Omit<CardapioItem, 'id'>>>({ 
     nome_produto: '',
-    categoria: categoriasOrdenadas[0],
+    categoria: categoriasOrdenadas[0], // Inicia com a primeira categoria correta
     disponivel: 'Sim',
     descricao_produto: '',
     observacao: '',
@@ -61,7 +61,7 @@ const CardapioPage: React.FC = () => {
     console.log(`Buscando itens do cardápio... (Origem: ${source || 'desconhecida'})`);
     setLoading(true);
     const { data, error: fetchError } = await supabase
-      .from('Cárdapio')
+      .from('Cárdapio') // Atenção ao nome da tabela, confirmar se é 'Cárdapio' ou 'Cardapio'
       .select('*');
 
     if (fetchError) {
@@ -78,7 +78,8 @@ const CardapioPage: React.FC = () => {
         promocoes: item.promocoes || '',
       })) as CardapioItem[];
       
-      processedData.sort((a, b) => a.nome_produto.localeCompare(b.nome_produto));
+      // Ordenar alfabeticamente dentro das categorias será feito na renderização
+      // processedData.sort((a, b) => a.nome_produto.localeCompare(b.nome_produto));
       
       setItensCardapio(processedData);
       setError(null);
@@ -110,6 +111,7 @@ const CardapioPage: React.FC = () => {
         };
         setItensCardapio(prevItems => {
           if (!prevItems.some(item => item.id === newItem.id)) {
+            // Adiciona e reordena para manter a ordem alfabética
             return [...prevItems, newItem].sort((a, b) => a.nome_produto.localeCompare(b.nome_produto));
           }
           return prevItems;
@@ -120,7 +122,7 @@ const CardapioPage: React.FC = () => {
           setItensCardapio(prevItems => prevItems.filter(item => item.id !== oldId));
         }
       } else if (payload.eventType === 'UPDATE') {
-        const updatedItem = { 
+        const updatedItemData = { 
           ...payload.new,
           disponivel: payload.new.disponivel === 'Sim' ? 'Sim' : 'Não',
           nome_produto: payload.new.nome_produto || '',
@@ -131,12 +133,16 @@ const CardapioPage: React.FC = () => {
         };
         setItensCardapio(prevItems => 
           prevItems.map(item => {
-            if (item.id === updatedItem.id && !item.isEditing) {
-              // Atualiza o item, mas preserva o estado de edição se ele estava sendo editado
-              return { ...item, ...updatedItem, isEditing: item.isEditing }; 
+            if (item.id === updatedItemData.id) {
+              // Atualiza o item, preservando o estado de edição
+              // e os dados originais se estiver editando
+              return { 
+                  ...item, // Mantém estado de edição e originais
+                  ...updatedItemData, // Aplica atualizações do DB
+              }; 
             }
             return item;
-          }).sort((a, b) => a.nome_produto.localeCompare(b.nome_produto))
+          }).sort((a, b) => a.nome_produto.localeCompare(b.nome_produto)) // Reordena após atualização
         );
       }
     };
@@ -145,7 +151,7 @@ const CardapioPage: React.FC = () => {
       .channel('cardapio_realtime_channel')
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'Cárdapio' },
+        { event: '*', schema: 'public', table: 'Cárdapio' }, // Confirmar nome da tabela
         handleCardapioChanges
       )
       .subscribe((status, err) => {
@@ -219,11 +225,12 @@ const CardapioPage: React.FC = () => {
     }
     setSaving(true);
     
-    const maxId = itensCardapio.reduce((max, item) => Math.max(max, item.id), 0);
-    const nextId = maxId + 1;
+    // Não precisa calcular maxId, o Supabase deve gerar o ID
+    // const maxId = itensCardapio.reduce((max, item) => Math.max(max, item.id), 0);
+    // const nextId = maxId + 1;
     
     const itemParaSalvar = {
-        id: nextId,
+        // id: nextId, // Deixar o DB gerar o ID
         nome_produto: novoItem.nome_produto,
         categoria: novoItem.categoria,
         disponivel: novoItem.disponivel,
@@ -233,7 +240,7 @@ const CardapioPage: React.FC = () => {
     };
     
     const { error: insertError } = await supabase
-      .from('Cárdapio')
+      .from('Cárdapio') // Confirmar nome da tabela
       .insert([itemParaSalvar]);
       
     setSaving(false);
@@ -251,6 +258,7 @@ const CardapioPage: React.FC = () => {
         observacao: '',
         promocoes: '',
       });
+      // Realtime deve atualizar a lista
     }
   };
 
@@ -264,7 +272,7 @@ const CardapioPage: React.FC = () => {
     if (!itemToDelete) return;
     setSaving(true);
     const { error: deleteError } = await supabase
-      .from('Cárdapio')
+      .from('Cárdapio') // Confirmar nome da tabela
       .delete()
       .match({ id: itemToDelete.id });
     setSaving(false);
@@ -275,6 +283,7 @@ const CardapioPage: React.FC = () => {
       alert(`Item "${itemToDelete.nome_produto}" removido com sucesso!`);
       setIsConfirmDeleteModalOpen(false);
       setItemToDelete(null);
+      // Realtime deve atualizar a lista
     }
   };
 
@@ -295,6 +304,7 @@ const CardapioPage: React.FC = () => {
               originalPromocoes: item.promocoes,
             };
           } else {
+            // Ao cancelar, restaura os valores originais
             return {
               ...item,
               isEditing: false,
@@ -307,7 +317,11 @@ const CardapioPage: React.FC = () => {
             };
           }
         }
-        return item;
+        // Se outro item estiver sendo editado, cancela a edição dele
+        // return { ...item, isEditing: false }; 
+        // Decisão: Permitir múltiplos edits ou apenas um por vez?
+        // Por enquanto, permite múltiplos, mas o botão Salvar Todos salva todos.
+        return item; 
       })
     );
   };
@@ -336,14 +350,16 @@ const CardapioPage: React.FC = () => {
   // Salvar todas as alterações
   const handleSaveAllChanges = async () => {
     if (itemsComAlteracoes.length === 0) {
-      alert("Nenhuma alteração para salvar.");
+      // alert("Nenhuma alteração para salvar."); // Pode ser silencioso
+      // Apenas desativa o modo de edição dos itens que não mudaram
+       setItensCardapio(prev => prev.map(item => item.isEditing ? { ...item, isEditing: false } : item));
       return;
     }
     setSaving(true);
     const updates = itemsComAlteracoes.map(item => {
       const { id, nome_produto, categoria, disponivel, descricao_produto, observacao, promocoes } = item;
       return supabase
-        .from('Cárdapio')
+        .from('Cárdapio') // Confirmar nome da tabela
         .update({ 
           nome_produto, 
           categoria, 
@@ -365,7 +381,7 @@ const CardapioPage: React.FC = () => {
         alert("Todas as alterações foram salvas com sucesso!");
         setItensCardapio(prev => prev.map(item => {
           if (itemsComAlteracoes.some(changedItem => changedItem.id === item.id)) {
-            // Limpa o estado original após salvar
+            // Limpa o estado original e sai do modo de edição após salvar
             const { originalNome, originalCategoria, originalDisponivel, originalDescricao, originalObservacao, originalPromocoes, ...rest } = item;
             return { ...rest, isEditing: false };
           }
@@ -409,18 +425,27 @@ const CardapioPage: React.FC = () => {
   }
 
   // Agrupar itens por categoria na ordem correta
-  const categoriasMapeadas: Record<string, CardapioItem[]> = {};
-  categoriasOrdenadas.forEach(categoria => {
-    categoriasMapeadas[categoria] = [];
-  });
-  itensCardapio.forEach(item => {
-    const categoria = item.categoria || 'Sem Categoria';
-    if (!categoriasMapeadas[categoria]) {
-      // Se a categoria do item não estiver na lista ordenada, cria a entrada
-      categoriasMapeadas[categoria] = [];
-    }
-    categoriasMapeadas[categoria].push(item);
-  });
+  const categoriasMapeadas = useMemo(() => {
+    const grouped: Record<string, CardapioItem[]> = {};
+    // Inicializa todas as categorias ordenadas
+    categoriasOrdenadas.forEach(cat => grouped[cat] = []);
+    
+    // Agrupa os itens
+    itensCardapio.forEach(item => {
+      const categoria = item.categoria || 'Sem Categoria';
+      if (!grouped[categoria]) {
+        grouped[categoria] = []; // Cria se não existir (caso raro)
+      }
+      grouped[categoria].push(item);
+    });
+
+    // Ordena itens dentro de cada categoria alfabeticamente
+    Object.keys(grouped).forEach(categoria => {
+        grouped[categoria].sort((a, b) => a.nome_produto.localeCompare(b.nome_produto));
+    });
+
+    return grouped;
+  }, [itensCardapio]);
 
   // Renderização principal
   return (
@@ -439,7 +464,7 @@ const CardapioPage: React.FC = () => {
         <h2 className="text-3xl font-semibold text-gray-700">Itens do Cardápio</h2>
         <button
           onClick={() => setIsAddModalOpen(true)}
-          className="bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md flex items-center transition-colors duration-150"
+          className="bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md flex items-center transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-pink-400 focus:ring-offset-1"
         >
           <PlusCircle size={20} className="mr-2" />
           Adicionar Novo Item
@@ -451,13 +476,13 @@ const CardapioPage: React.FC = () => {
         <div className="sticky top-4 z-40 mb-4">
             <div className="bg-blue-50 border border-blue-200 text-blue-800 p-4 rounded-lg shadow-md flex flex-col sm:flex-row justify-between items-center space-y-2 sm:space-y-0">
                 <div className="flex items-center">
-                    <AlertTriangle size={20} className="mr-2 flex-shrink-0" />
+                    <AlertTriangle size={20} className="mr-2 flex-shrink-0 text-blue-600" />
                     <span>Você tem {itemsComAlteracoes.length} item(ns) com alterações não salvas.</span>
                 </div>
                 <button
                     onClick={handleSaveAllChanges}
                     disabled={saving}
-                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow flex items-center transition-all duration-150 w-full sm:w-auto justify-center"
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow flex items-center transition-all duration-150 w-full sm:w-auto justify-center focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-1"
                 >
                     {saving ? <Loader2 size={18} className="animate-spin mr-2" /> : <Save size={18} className="mr-2" />}
                     {saving ? 'Salvando...' : 'Salvar Alterações'}
@@ -469,49 +494,47 @@ const CardapioPage: React.FC = () => {
       {/* Modal Adicionar Item */}
       {isAddModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-          {/* Container do Modal com altura máxima e flex col */}
           <div className="bg-white p-6 sm:p-8 rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
             <h3 className="text-2xl font-semibold mb-6 text-gray-800 text-center flex-shrink-0">Adicionar Novo Item</h3>
-            {/* Área de Scroll para o Formulário */}
             <form id="add-item-form" onSubmit={handleAddNewItem} className="flex-grow overflow-y-auto pr-2 space-y-4 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
+              {/* Campos do formulário (mantidos) */}
               <div>
                 <label htmlFor="nome_produto_novo" className="block text-sm font-medium text-gray-700 mb-1">Nome do Produto</label>
-                <input type="text" name="nome_produto" id="nome_produto_novo" value={novoItem.nome_produto || ''} onChange={handleNovoItemInputChange} required className="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-pink-500 focus:border-pink-500" />
+                <input type="text" name="nome_produto" id="nome_produto_novo" value={novoItem.nome_produto || ''} onChange={handleNovoItemInputChange} required className="w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-300 focus:border-pink-400 transition-colors" />
               </div>
               <div>
                 <label htmlFor="categoria_novo" className="block text-sm font-medium text-gray-700 mb-1">Categoria</label>
-                <select name="categoria" id="categoria_novo" value={novoItem.categoria} onChange={handleNovoItemInputChange} required className="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-pink-500 focus:border-pink-500">
+                <select name="categoria" id="categoria_novo" value={novoItem.categoria} onChange={handleNovoItemInputChange} required className="w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-300 focus:border-pink-400 transition-colors appearance-none bg-white bg-no-repeat bg-right pr-8" style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`}}>
                   {categoriasOrdenadas.map(cat => (<option key={cat} value={cat}>{cat}</option>))}
                 </select>
               </div>
               <div>
                 <label htmlFor="disponivel_novo" className="block text-sm font-medium text-gray-700 mb-1">Disponível</label>
-                <select name="disponivel" id="disponivel_novo" value={novoItem.disponivel} onChange={handleNovoItemDisponivelChange} required className="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-pink-500 focus:border-pink-500">
+                <select name="disponivel" id="disponivel_novo" value={novoItem.disponivel} onChange={handleNovoItemDisponivelChange} required className="w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-300 focus:border-pink-400 transition-colors appearance-none bg-white bg-no-repeat bg-right pr-8" style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`}}>
                   <option value="Sim">Sim</option>
                   <option value="Não">Não</option>
                 </select>
               </div>
               <div>
                 <label htmlFor="descricao_produto_novo" className="block text-sm font-medium text-gray-700 mb-1">Descrição</label>
-                <textarea name="descricao_produto" id="descricao_produto_novo" value={novoItem.descricao_produto || ''} onChange={handleNovoItemInputChange} rows={3} className="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-pink-500 focus:border-pink-500" />
+                <textarea name="descricao_produto" id="descricao_produto_novo" value={novoItem.descricao_produto || ''} onChange={handleNovoItemInputChange} rows={3} className="w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-300 focus:border-pink-400 transition-colors" />
               </div>
               <div>
                 <label htmlFor="promocoes_novo" className="block text-sm font-medium text-gray-700 mb-1">Promoções</label>
-                <textarea name="promocoes" id="promocoes_novo" value={novoItem.promocoes || ''} onChange={handleNovoItemInputChange} rows={2} className="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-pink-500 focus:border-pink-500" />
+                <textarea name="promocoes" id="promocoes_novo" value={novoItem.promocoes || ''} onChange={handleNovoItemInputChange} rows={2} className="w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-300 focus:border-pink-400 transition-colors" />
               </div>
               <div>
                 <label htmlFor="observacao_novo" className="block text-sm font-medium text-gray-700 mb-1">Observação</label>
-                <textarea name="observacao" id="observacao_novo" value={novoItem.observacao || ''} onChange={handleNovoItemInputChange} rows={2} className="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-pink-500 focus:border-pink-500" />
+                <textarea name="observacao" id="observacao_novo" value={novoItem.observacao || ''} onChange={handleNovoItemInputChange} rows={2} className="w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-300 focus:border-pink-400 transition-colors" />
               </div>
             </form>
             {/* Rodapé Fixo com Botões */}
             <div className="mt-6 pt-4 border-t border-gray-200 flex justify-end space-x-3 flex-shrink-0">
-              <button type="button" onClick={() => setIsAddModalOpen(false)} disabled={saving} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg transition-colors flex items-center">
-                <XCircle size={18} className="mr-1"/> Cancelar
+              <button type="button" onClick={() => setIsAddModalOpen(false)} disabled={saving} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg transition-colors flex items-center focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-1">
+                <XCircle size={18} className="mr-1.5"/> Cancelar
               </button>
-              {/* Botão submit agora referencia o form pelo ID */}
-              <button type="submit" form="add-item-form" disabled={saving} className="px-4 py-2 bg-pink-500 hover:bg-pink-600 text-white rounded-lg shadow transition-colors flex items-center">
-                {saving ? <Loader2 size={18} className="mr-1 animate-spin"/> : <Save size={18} className="mr-1"/>}
+              <button type="submit" form="add-item-form" disabled={saving} className="px-4 py-2 bg-pink-500 hover:bg-pink-600 text-white rounded-lg shadow transition-colors flex items-center focus:outline-none focus:ring-2 focus:ring-pink-400 focus:ring-offset-1">
+                {saving ? <Loader2 size={18} className="mr-1.5 animate-spin"/> : <Save size={18} className="mr-1.5"/>}
                 {saving ? 'Salvando...' : 'Salvar Novo Item'}
               </button>
             </div>
@@ -532,11 +555,11 @@ const CardapioPage: React.FC = () => {
                 </p>
             </div>
             <div className="flex justify-center space-x-4">
-              <button onClick={() => setIsConfirmDeleteModalOpen(false)} disabled={saving} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg transition-colors">
+              <button onClick={() => setIsConfirmDeleteModalOpen(false)} disabled={saving} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-1">
                 Cancelar
               </button>
-              <button onClick={handleDeleteItem} disabled={saving} className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg shadow transition-colors flex items-center">
-                {saving ? <Loader2 size={18} className="mr-1 animate-spin"/> : <Trash2 size={18} className="mr-1"/>}
+              <button onClick={handleDeleteItem} disabled={saving} className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg shadow transition-colors flex items-center focus:outline-none focus:ring-2 focus:ring-red-400 focus:ring-offset-1">
+                {saving ? <Loader2 size={18} className="mr-1.5 animate-spin"/> : <Trash2 size={18} className="mr-1.5"/>}
                 {saving ? 'Removendo...' : 'Confirmar Remoção'}
               </button>
             </div>
@@ -552,19 +575,21 @@ const CardapioPage: React.FC = () => {
         </div>
       )}
       
-      {/* Lista de Categorias e Itens */}
-      {Object.entries(categoriasMapeadas).map(([categoria, itens]) => {
-        if (itens.length === 0) return null;
+      {/* Lista de Categorias e Itens - Renderizando na ordem correta */}
+      {categoriasOrdenadas.map((categoria) => {
+        const itensDaCategoria = categoriasMapeadas[categoria];
+        if (!itensDaCategoria || itensDaCategoria.length === 0) return null; // Pula categorias vazias
         
         return (
           <div key={categoria} className="mb-10">
             <h3 className="text-2xl font-semibold text-gray-700 mb-4 pb-2 border-b border-gray-200">{categoria}</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {itens.map(item => (
+              {itensDaCategoria.map(item => (
                 <div 
                   key={item.id} 
-                  className={`bg-white rounded-lg border border-gray-200 shadow-sm hover:shadow-md transition-shadow duration-200 flex flex-col h-full ${
-                    item.isEditing ? 'ring-2 ring-pink-300' : ''
+                  // Estilo do card restaurado
+                  className={`bg-white rounded-xl border border-gray-200 shadow-md hover:shadow-lg transition-all duration-300 flex flex-col h-full ${
+                    item.isEditing ? 'ring-2 ring-pink-400 ring-offset-1' : ''
                   }`}
                 >
                   {/* Conteúdo do Card */}
@@ -576,7 +601,7 @@ const CardapioPage: React.FC = () => {
                           type="text" 
                           value={item.nome_produto}
                           onChange={(e) => handleEditInputChange(item.id, 'nome_produto', e.target.value)} 
-                          className="w-full p-1 border border-gray-300 rounded focus:ring-1 focus:ring-pink-500 focus:border-pink-500 text-center text-lg font-semibold mb-1"
+                          className="w-full p-1 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pink-300 focus:border-pink-400 text-center text-lg font-semibold mb-1 transition-colors"
                         />
                       ) : (
                         <h4 className="text-lg font-semibold text-gray-800 mb-1 break-words">
@@ -587,16 +612,17 @@ const CardapioPage: React.FC = () => {
                         <select 
                           value={item.disponivel} 
                           onChange={(e) => handleEditInputChange(item.id, 'disponivel', e.target.value as 'Sim' | 'Não')} 
-                          className="p-1 border border-gray-300 rounded focus:ring-1 focus:ring-pink-500 focus:border-pink-500 text-sm"
+                          className="p-1 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pink-300 focus:border-pink-400 text-sm appearance-none bg-white bg-no-repeat bg-right pr-8 transition-colors" 
+                          style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`}}
                         >
                           <option value="Sim">Disponível</option>
                           <option value="Não">Indisponível</option>
                         </select>
                       ) : (
-                        <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium inline-block ${
+                        <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium inline-block border ${
                           item.disponivel === 'Sim' 
-                            ? 'bg-green-100 text-green-800 border border-green-200'
-                            : 'bg-red-100 text-red-800 border border-red-200'
+                            ? 'bg-green-50 text-green-700 border-green-200'
+                            : 'bg-red-50 text-red-700 border-red-200'
                         }`}>
                           {item.disponivel}
                         </span>
@@ -610,11 +636,13 @@ const CardapioPage: React.FC = () => {
                         <select 
                           value={item.categoria} 
                           onChange={(e) => handleEditInputChange(item.id, 'categoria', e.target.value)} 
-                          className="w-full p-1 border border-gray-300 rounded focus:ring-1 focus:ring-pink-500 focus:border-pink-500 text-sm"
+                          className="w-full p-1 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pink-300 focus:border-pink-400 text-sm appearance-none bg-white bg-no-repeat bg-right pr-8 transition-colors"
+                          style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`}}
                         >
                           {categoriasOrdenadas.map(cat => (
                             <option key={cat} value={cat}>{cat}</option>
                           ))}
+                          {/* Adiciona a categoria atual se não estiver na lista padrão */}
                           {!categoriasOrdenadas.includes(item.categoria) && <option value={item.categoria}>{item.categoria}</option>}
                         </select>
                       </div>
@@ -629,7 +657,7 @@ const CardapioPage: React.FC = () => {
                             value={item.descricao_produto || ''} 
                             onChange={(e) => handleEditInputChange(item.id, 'descricao_produto', e.target.value)} 
                             rows={3} 
-                            className="w-full p-1 border border-gray-300 rounded focus:ring-1 focus:ring-pink-500 focus:border-pink-500 text-sm"
+                            className="w-full p-1 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pink-300 focus:border-pink-400 text-sm transition-colors"
                           />
                         ) : (
                           <p className="text-gray-600 text-sm text-justify break-words">{item.descricao_produto}</p>
@@ -646,10 +674,10 @@ const CardapioPage: React.FC = () => {
                             value={item.promocoes || ''} 
                             onChange={(e) => handleEditInputChange(item.id, 'promocoes', e.target.value)} 
                             rows={2} 
-                            className="w-full p-1 border border-gray-300 rounded focus:ring-1 focus:ring-pink-500 focus:border-pink-500 text-sm"
+                            className="w-full p-1 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pink-300 focus:border-pink-400 text-sm transition-colors"
                           />
                         ) : (
-                          <div className="bg-pink-50 border border-pink-100 text-pink-800 p-2 rounded text-sm text-justify break-words">
+                          <div className="bg-pink-50 border border-pink-100 text-pink-800 p-2 rounded-lg text-sm text-justify break-words">
                             {item.promocoes}
                           </div>
                         )}
@@ -665,7 +693,7 @@ const CardapioPage: React.FC = () => {
                             value={item.observacao || ''} 
                             onChange={(e) => handleEditInputChange(item.id, 'observacao', e.target.value)} 
                             rows={2} 
-                            className="w-full p-1 border border-gray-300 rounded focus:ring-1 focus:ring-pink-500 focus:border-pink-500 text-sm"
+                            className="w-full p-1 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pink-300 focus:border-pink-400 text-sm transition-colors"
                           />
                         ) : (
                           <p className="text-gray-600 italic text-sm text-justify break-words">{item.observacao}</p>
@@ -674,28 +702,28 @@ const CardapioPage: React.FC = () => {
                     )}
                   </div>
                   
-                  {/* Botões de Ação (Sempre no final) */}
-                  <div className="p-3 border-t border-gray-100 bg-gray-50 mt-auto flex justify-center space-x-2">
+                  {/* Botões de Ação (Sempre no final) - Estilo restaurado */}
+                  <div className="p-3 border-t border-gray-100 bg-gray-50 mt-auto flex justify-center space-x-3">
                     {item.isEditing ? (
                       <button 
-                        onClick={() => toggleEditMode(item.id)} 
-                        className="px-3 py-1 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded text-sm transition-colors flex items-center"
+                        onClick={() => toggleEditMode(item.id)} // Botão Cancelar
+                        className="px-4 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-200 rounded-lg shadow-sm text-sm font-medium transition-all duration-150 flex items-center focus:outline-none focus:ring-2 focus:ring-gray-300 focus:ring-offset-1"
                       >
-                        <XCircle size={14} className="mr-1" /> Cancelar
+                        <XCircle size={14} className="mr-1.5" /> Cancelar
                       </button>
                     ) : (
                       <button 
-                        onClick={() => toggleEditMode(item.id)} 
-                        className="px-3 py-1 bg-blue-500 hover:bg-blue-600 text-white rounded shadow-sm text-sm transition-colors flex items-center"
+                        onClick={() => toggleEditMode(item.id)} // Botão Editar
+                        className="px-4 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg shadow-sm text-sm font-medium transition-all duration-150 flex items-center focus:outline-none focus:ring-2 focus:ring-blue-300 focus:ring-offset-1"
                       >
-                        <Edit3 size={14} className="mr-1" /> Editar
+                        <Edit3 size={14} className="mr-1.5" /> Editar
                       </button>
                     )}
                     <button 
-                      onClick={() => openDeleteConfirmationModal(item)} 
-                      className="px-3 py-1 bg-red-500 hover:bg-red-600 text-white rounded shadow-sm text-sm transition-colors flex items-center"
+                      onClick={() => openDeleteConfirmationModal(item)} // Botão Excluir
+                      className="px-4 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg shadow-sm text-sm font-medium transition-all duration-150 flex items-center focus:outline-none focus:ring-2 focus:ring-red-300 focus:ring-offset-1"
                     >
-                      <Trash2 size={14} className="mr-1" /> Excluir
+                      <Trash2 size={14} className="mr-1.5" /> Excluir
                     </button>
                   </div>
                 </div>
@@ -709,3 +737,4 @@ const CardapioPage: React.FC = () => {
 };
 
 export default CardapioPage;
+

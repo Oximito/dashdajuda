@@ -53,10 +53,10 @@ const mapSupabaseItemToState = (item: any): CardapioItem => ({
 // --- Redesign Styles ---
 const baseInputStyle = "block w-full text-sm rounded-lg border focus:outline-none focus:ring-2 transition duration-150 ease-in-out";
 const inputStyle = `${baseInputStyle} border-gray-300 focus:border-pink-500 focus:ring-pink-300 placeholder-gray-400 px-3 py-2`;
-const inputErrorStyle = `${baseInputStyle} border-red-500 focus:border-red-600 focus:ring-red-300 px-3 py-2`; // Example error style
+// const inputErrorStyle = `${baseInputStyle} border-red-500 focus:border-red-600 focus:ring-red-300 px-3 py-2`; // REMOVED - Not used
 const labelStyle = "block text-sm font-medium text-gray-700 mb-1";
 const baseButtonStyle = "inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed";
-const primaryButtonStyle = `${baseButtonStyle} text-white bg-pink-600 hover:bg-pink-700 focus:ring-pink-500`;
+// const primaryButtonStyle = `${baseButtonStyle} text-white bg-pink-600 hover:bg-pink-700 focus:ring-pink-500`; // REMOVED - Not used (specific colors applied directly)
 const secondaryButtonStyle = `${baseButtonStyle} text-gray-700 bg-white border-gray-300 hover:bg-gray-50 focus:ring-pink-500`;
 const dangerButtonStyle = `${baseButtonStyle} text-white bg-red-600 hover:bg-red-700 focus:ring-red-500`;
 const greenButtonStyle = `${baseButtonStyle} text-white bg-green-600 hover:bg-green-700 focus:ring-green-500`;

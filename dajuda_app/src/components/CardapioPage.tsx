@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '../supabaseClient';
 import { PlusCircle, Save, XCircle, Trash2, Edit3, AlertTriangle, Loader2 } from 'lucide-react';
-import type { RealtimeChannel, RealtimePostgresChangesPayload } from "@supabase/supabase-js";
+import type { RealtimeChannel } from "@supabase/supabase-js"; // Removido RealtimePostgresChangesPayload
 
 // Interface para o item do cardápio
 export interface CardapioItem {
@@ -104,8 +104,8 @@ const CardapioPage: React.FC = () => {
     console.log("[CardapioPage] Tentando conectar ao canal Realtime...");
     const channel = supabase.channel('cardapio_realtime_channel');
 
-    // Handler com tipagem mais segura e type guards
-    const handleRealtimeChange = (payload: RealtimePostgresChangesPayload<any>) => {
+    // Handler com payload tipado como 'any' para evitar erro de 'never'
+    const handleRealtimeChange = (payload: any) => {
         console.log("[CardapioPage] Mudança Realtime recebida:", payload);
 
         // Verifica se eventType existe e é uma string
@@ -127,14 +127,12 @@ const CardapioPage: React.FC = () => {
 
             switch (payload.eventType) {
                 case 'INSERT':
-                    // Verifica se 'new' existe e tem 'id'
                     if (recordId && hasId(payload.new) && !updatedItems.some(item => item.id === recordId)) {
                         updatedItems.push(mapSupabaseItemToState(payload.new));
                         console.log(`[CardapioPage] Item ${recordId} inserido via Realtime.`);
                     }
                     break;
                 case 'UPDATE':
-                    // Verifica se 'new' existe e tem 'id'
                     if (recordId && hasId(payload.new)) {
                         updatedItems = updatedItems.map(item => {
                             if (item.id === recordId) {
@@ -151,13 +149,13 @@ const CardapioPage: React.FC = () => {
                     }
                     break;
                 case 'DELETE':
-                    // Verifica se 'old' existe e tem 'id'
                     if (recordId && hasId(payload.old)) {
                         updatedItems = updatedItems.filter(item => item.id !== recordId);
                         console.log(`[CardapioPage] Item ${recordId} removido via Realtime.`);
                     }
                     break;
                 default:
+                    // Acessa eventType aqui, agora seguro pois payload é 'any'
                     console.log("[CardapioPage] Evento Realtime não tratado:", payload.eventType);
             }
             updatedItems.sort((a, b) => (a.nome_produto || '').localeCompare(b.nome_produto || ''));
@@ -168,7 +166,7 @@ const CardapioPage: React.FC = () => {
     channel.on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'Cárdapio' },
-      handleRealtimeChange
+      handleRealtimeChange // Passa o handler com payload 'any'
     ).subscribe((status: "SUBSCRIBED" | "TIMED_OUT" | "CLOSED" | "CHANNEL_ERROR", err?: Error) => {
       if (status === 'SUBSCRIBED') {
         console.log('[CardapioPage] Conectado ao canal Realtime!');

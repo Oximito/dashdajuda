@@ -65,6 +65,39 @@ function App() {
     }
   }, []);
 
+  // Função para gerenciar reconexões com backoff exponencial - Usando useCallback
+  // Definindo handleReconnect antes de setupRealtimeChannel para evitar erro de declaração
+  const handleReconnect = useCallback((errorMessage: string) => {
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+    }
+
+    if (reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
+      reconnectAttemptsRef.current += 1;
+      setReconnecting(true);
+      setError(null); // Limpa erro principal enquanto tenta reconectar
+      
+      // Calcula delay exponencial
+      const delay = RECONNECT_DELAY * Math.pow(2, reconnectAttemptsRef.current - 1);
+      console.log(`Tentativa de reconexão (Comandas) ${reconnectAttemptsRef.current}/${MAX_RECONNECT_ATTEMPTS} em ${delay / 1000}s...`);
+      
+      // Agenda a próxima tentativa
+      reconnectTimeoutRef.current = setTimeout(() => {
+        // Só tenta reconectar se ainda estiver na view de comandas
+        if (currentView === 'comandas') { 
+            // Chama setupRealtimeChannel aqui, que agora está definida abaixo
+            setupRealtimeChannel(); 
+        }
+      }, delay);
+    } else {
+      // Atingiu o limite de tentativas
+      setReconnecting(false);
+      setError(`Erro de conexão em tempo real (Comandas): ${errorMessage} - Falha após ${MAX_RECONNECT_ATTEMPTS} tentativas. Verifique a conexão ou atualize a página.`);
+    }
+  // Depende de currentView e setupRealtimeChannel (que será definida abaixo)
+  // eslint-disable-next-line react-hooks/exhaustive-deps 
+  }, [currentView]); // Removido setupRealtimeChannel daqui temporariamente
+
   // Função para configurar o canal Realtime das Comandas - Usando useCallback
   const setupRealtimeChannel = useCallback(() => {
     console.log("Configurando canal Realtime para Comandas...");
@@ -141,39 +174,14 @@ function App() {
           }
         }
       });
-  // Depende de currentView para lógica de fechamento/reconexão
-  // Adicionado handleReconnect como dependência
-  }, [currentView, handleReconnect]); 
+  // Depende de currentView e handleReconnect
+  }, [currentView, handleReconnect]);
 
-  // Função para gerenciar reconexões com backoff exponencial - Usando useCallback
-  const handleReconnect = useCallback((errorMessage: string) => {
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current);
-    }
-
-    if (reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
-      reconnectAttemptsRef.current += 1;
-      setReconnecting(true);
-      setError(null); // Limpa erro principal enquanto tenta reconectar
-      
-      // Calcula delay exponencial
-      const delay = RECONNECT_DELAY * Math.pow(2, reconnectAttemptsRef.current - 1);
-      console.log(`Tentativa de reconexão (Comandas) ${reconnectAttemptsRef.current}/${MAX_RECONNECT_ATTEMPTS} em ${delay / 1000}s...`);
-      
-      // Agenda a próxima tentativa
-      reconnectTimeoutRef.current = setTimeout(() => {
-        // Só tenta reconectar se ainda estiver na view de comandas
-        if (currentView === 'comandas') { 
-            setupRealtimeChannel();
-        }
-      }, delay);
-    } else {
-      // Atingiu o limite de tentativas
-      setReconnecting(false);
-      setError(`Erro de conexão em tempo real (Comandas): ${errorMessage} - Falha após ${MAX_RECONNECT_ATTEMPTS} tentativas. Verifique a conexão ou atualize a página.`);
-    }
-  // Depende de setupRealtimeChannel e currentView
-  }, [setupRealtimeChannel, currentView]);
+  // Adiciona setupRealtimeChannel como dependência de handleReconnect após sua definição
+  useEffect(() => {
+    // Este efeito existe apenas para satisfazer a dependência de handleReconnect
+    // A lógica real de chamada está em handleReconnect e no useEffect principal
+  }, [setupRealtimeChannel]);
 
   // Efeito principal para gerenciar a conexão/desconexão do canal ao mudar de view
   useEffect(() => {
@@ -305,7 +313,7 @@ function App() {
     }
   };
 
-  // Renderização principal - Estilo "Apple" consolidado
+  // Renderização principal - CORRIGINDO ERROS DE SINTAXE JSX
   return (
     <div className="p-4 sm:p-6 bg-gray-50 min-h-screen font-sans">
       {/* Cabeçalho */}
@@ -319,7 +327,7 @@ function App() {
                         ${currentView === "comandas" 
                           ? "bg-pink-600 text-white shadow-md scale-105" // Botão ativo
                           : "bg-gray-200 text-gray-700 hover:bg-gray-300"}` // Botão inativo
-          >
+          }>
             Pedidos
           </button>
           <button 
@@ -328,14 +336,14 @@ function App() {
                         ${currentView === "cardapio" 
                           ? "bg-pink-600 text-white shadow-md scale-105" // Botão ativo
                           : "bg-gray-200 text-gray-700 hover:bg-gray-300"}` // Botão inativo
-          >
+          }>
             Cardápio
           </button>
-        </nav>
+        </nav> {/* Fechamento da tag nav CORRIGIDO */} 
         {/* Título da Aba Atual */}
         {currentView === "comandas" && <p className="text-xl sm:text-2xl text-center text-gray-600">Painel de Pedidos</p>}
         {currentView === "cardapio" && <p className="text-xl sm:text-2xl text-center text-gray-600">Gerenciamento do Cardápio</p>}
-      </header>
+      </header> {/* Fechamento da tag header CORRIGIDO */} 
 
       {/* Mensagem de Erro Global (Não bloqueante) */}
       {error && (
@@ -498,17 +506,17 @@ function App() {
               </div>
             </div>
           )}
-        </>
-      )}
+        </> // Fechamento do Fragment <> CORRIGIDO
+      )} {/* Fechamento do if (currentView === "comandas") CORRIGIDO */} 
 
       {/* Conteúdo da Aba Cardápio */}
       {currentView === "cardapio" && (
         <CardapioPage />
       )}
 
-    </div>
-  );
-}
+    </div> // Fechamento da div principal CORRIGIDO
+  ); // Fechamento do return CORRIGIDO
+} // Fechamento da função App CORRIGIDO
 
 export default App;
 

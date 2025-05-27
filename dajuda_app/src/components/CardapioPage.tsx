@@ -1,36 +1,38 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '../supabaseClient';
 import { PlusCircle, Save, XCircle, Trash2, Edit3, AlertTriangle, Loader2 } from 'lucide-react';
-import type { RealtimeChannel } from "@supabase/supabase-js";
+import type { RealtimeChannel, RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 
 // Interface para o item do cardápio
 export interface CardapioItem {
   id: number;
   categoria: string;
-  disponivel: 'Sim' | 'Não';
+  disponivel: boolean;
   nome_produto: string;
   descricao_produto?: string | null;
   observacao?: string | null;
-  promocoes?: string | null;
+  promocao?: string | null; // Adicionado campo promoção
   isEditing?: boolean;
+  // Campos para guardar o estado original durante a edição
   originalNome?: string;
   originalCategoria?: string;
-  originalDisponivel?: 'Sim' | 'Não';
+  originalDisponivel?: boolean;
   originalDescricao?: string | null;
   originalObservacao?: string | null;
-  originalPromocoes?: string | null;
+  originalPromocao?: string | null; // Adicionado campo promoção original
 }
 
-// Ordem correta das categorias - CORRIGIDA
-const categoriasOrdenadas = [
+// Ordem definida das categorias
+const categoriasOrdem = [
   "Marmita do dia",
   "Marmita clássica",
-  "Mix de salada",
-  "Bebida", // Ajustado para singular se necessário, ou manter como no DB
-  "Adicional", // Ajustado para singular se necessário, ou manter como no DB
-  "Unidade", // Ajustado para singular se necessário, ou manter como no DB
+  "Mix de salada", // Adicionado Mix de salada conforme solicitado
+  "Bebida",
+  "Adicional",
+  "Unidade",
 ];
 
+// Componente da Página do Cardápio
 const CardapioPage: React.FC = () => {
   const [itensCardapio, setItensCardapio] = useState<CardapioItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -40,164 +42,105 @@ const CardapioPage: React.FC = () => {
   const [itemToDelete, setItemToDelete] = useState<CardapioItem | null>(null);
   const [saving, setSaving] = useState<boolean>(false);
   const cardapioChannelRef = useRef<RealtimeChannel | null>(null);
-  const [reconnecting, setReconnecting] = useState<boolean>(false);
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const reconnectAttemptsRef = useRef<number>(0);
-  const MAX_RECONNECT_ATTEMPTS = 5;
-  const RECONNECT_DELAY = 5000;
+  const [editedItems, setEditedItems] = useState<Record<number, Partial<CardapioItem>>>({}); // Rastreia edições
 
-  // Estado para o novo item
+  // Estado inicial para o formulário de novo item
   const [novoItem, setNovoItem] = useState<Partial<Omit<CardapioItem, 'id'>>>({ 
     nome_produto: '',
-    categoria: categoriasOrdenadas[0], // Inicia com a primeira categoria correta
-    disponivel: 'Sim',
+    categoria: categoriasOrdem[0], // Usa a ordem definida
+    disponivel: true,
     descricao_produto: '',
     observacao: '',
-    promocoes: '',
+    promocao: '', // Adicionado campo promoção
   });
 
-  // Função para buscar itens do cardápio
+  // Busca itens do cardápio, com tratamento de erro e ordenação
   const fetchItensCardapio = useCallback(async (source?: string) => {
     console.log(`Buscando itens do cardápio... (Origem: ${source || 'desconhecida'})`);
     setLoading(true);
     const { data, error: fetchError } = await supabase
-      .from('Cárdapio') // Atenção ao nome da tabela, confirmar se é 'Cárdapio' ou 'Cardapio'
+      .from('Cárdapio') // Nome correto da tabela
       .select('*');
+      // A ordenação será feita no frontend para garantir a ordem personalizada
 
     if (fetchError) {
       console.error('Erro ao buscar itens do cardápio:', fetchError);
       setError(`Falha ao carregar cardápio: ${fetchError.message}`);
+      setItensCardapio([]); // Limpa em caso de erro
     } else {
-      const processedData = data.map(item => ({ 
-        ...item,
-        disponivel: item.disponivel === 'Sim' ? 'Sim' : 'Não',
-        nome_produto: item.nome_produto || '',
-        categoria: item.categoria || '',
-        descricao_produto: item.descricao_produto || '',
-        observacao: item.observacao || '',
-        promocoes: item.promocoes || '',
-      })) as CardapioItem[];
+      // Ordena os dados recebidos pela ordem definida em categoriasOrdem
+      const dadosOrdenados = (data as CardapioItem[]).sort((a, b) => {
+        const indexA = categoriasOrdem.indexOf(a.categoria);
+        const indexB = categoriasOrdem.indexOf(b.categoria);
+        // Coloca categorias desconhecidas no final
+        if (indexA === -1 && indexB === -1) return a.nome_produto.localeCompare(b.nome_produto);
+        if (indexA === -1) return 1;
+        if (indexB === -1) return -1;
+        // Ordena pela categoria e depois pelo nome do produto
+        if (indexA !== indexB) return indexA - indexB;
+        return a.nome_produto.localeCompare(b.nome_produto);
+      });
       
-      // Ordenar alfabeticamente dentro das categorias será feito na renderização
-      // processedData.sort((a, b) => a.nome_produto.localeCompare(b.nome_produto));
-      
-      setItensCardapio(processedData);
-      setError(null);
+      // Mantém as edições locais não salvas
+      setItensCardapio(prevItens => {
+        const itensEditadosAtuais = prevItens.filter(item => editedItems[item.id]);
+        const mapaEditados = itensEditadosAtuais.reduce((acc, item) => {
+            acc[item.id] = { ...item, ...editedItems[item.id] };
+            return acc;
+        }, {} as Record<number, CardapioItem>);
+
+        return dadosOrdenados.map(itemDB => {
+            if (mapaEditados[itemDB.id]) {
+                // Se estava sendo editado, mantém o estado editado
+                return mapaEditados[itemDB.id];
+            } else {
+                // Caso contrário, usa o dado do banco
+                return { ...itemDB, isEditing: false };
+            }
+        });
+      });
+      setError(null); // Limpa erro se a busca for bem-sucedida
     }
     setLoading(false);
-  }, []);
+  }, [editedItems]); // Adiciona editedItems como dependência
 
-  // Função para configurar o canal Realtime
-  const setupRealtimeChannel = useCallback(() => {
-    if (cardapioChannelRef.current) {
-      supabase.removeChannel(cardapioChannelRef.current)
-        .then(() => console.log('Canal Realtime (Cárdapio) removido antes de reconectar'))
-        .catch(console.error);
-      cardapioChannelRef.current = null;
-    }
+  // Efeito para buscar dados e configurar Realtime
+  useEffect(() => {
+    fetchItensCardapio('initial mount');
 
-    const handleCardapioChanges = (payload: any) => {
+    const handleCardapioChanges = (payload: RealtimePostgresChangesPayload<{[key: string]: any}>) => {
       console.log("Mudança recebida do Supabase Realtime (Cárdapio)!", payload);
-      
-      if (payload.eventType === 'INSERT') {
-        const newItem = { 
-          ...payload.new,
-          disponivel: payload.new.disponivel === 'Sim' ? 'Sim' : 'Não',
-          nome_produto: payload.new.nome_produto || '',
-          categoria: payload.new.categoria || '',
-          descricao_produto: payload.new.descricao_produto || '',
-          observacao: payload.new.observacao || '',
-          promocoes: payload.new.promocoes || '',
-        };
-        setItensCardapio(prevItems => {
-          if (!prevItems.some(item => item.id === newItem.id)) {
-            // Adiciona e reordena para manter a ordem alfabética
-            return [...prevItems, newItem].sort((a, b) => a.nome_produto.localeCompare(b.nome_produto));
-          }
-          return prevItems;
-        });
-      } else if (payload.eventType === 'DELETE') {
-        const oldId = payload.old?.id;
-        if (oldId) {
-          setItensCardapio(prevItems => prevItems.filter(item => item.id !== oldId));
-        }
-      } else if (payload.eventType === 'UPDATE') {
-        const updatedItemData = { 
-          ...payload.new,
-          disponivel: payload.new.disponivel === 'Sim' ? 'Sim' : 'Não',
-          nome_produto: payload.new.nome_produto || '',
-          categoria: payload.new.categoria || '',
-          descricao_produto: payload.new.descricao_produto || '',
-          observacao: payload.new.observacao || '',
-          promocoes: payload.new.promocoes || '',
-        };
-        setItensCardapio(prevItems => 
-          prevItems.map(item => {
-            if (item.id === updatedItemData.id) {
-              // Atualiza o item, preservando o estado de edição
-              // e os dados originais se estiver editando
-              return { 
-                  ...item, // Mantém estado de edição e originais
-                  ...updatedItemData, // Aplica atualizações do DB
-              }; 
-            }
-            return item;
-          }).sort((a, b) => a.nome_produto.localeCompare(b.nome_produto)) // Reordena após atualização
-        );
-      }
+      // Busca novamente para refletir mudanças, preservando edições locais
+      fetchItensCardapio('realtime update'); 
     };
 
+    // Configuração do canal Realtime
     cardapioChannelRef.current = supabase
       .channel('cardapio_realtime_channel')
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'Cárdapio' }, // Confirmar nome da tabela
+        { event: '*', schema: 'public', table: 'Cárdapio' },
         handleCardapioChanges
       )
       .subscribe((status, err) => {
+        // Tratamento de status da conexão Realtime
         if (status === 'SUBSCRIBED') {
           console.log('Conectado ao canal Realtime do Cardapio!');
-          setError(null);
-          setReconnecting(false);
-          reconnectAttemptsRef.current = 0;
-        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-          const errorMsg = status === 'CHANNEL_ERROR' ? (err?.message || 'Erro desconhecido') : status;
-          console.error(`Erro/Status no canal Realtime do Cardapio: ${errorMsg}`);
-          handleReconnect(errorMsg);
+          setError(prevError => prevError?.includes('(Cárdapio)') ? null : prevError); // Limpa erro específico do cardápio
+        } else if (status === 'CHANNEL_ERROR') {
+          console.error('Erro no canal Realtime do Cardapio:', err);
+          setError(`Erro de conexão em tempo real (Cárdapio): ${err?.message || 'Erro desconhecido'}`);
+        } else if (status === 'TIMED_OUT') {
+          console.warn('Timeout na conexão Realtime do Cardapio.');
+          setError('Conexão em tempo real (Cárdapio) expirou. As atualizações podem não ser instantâneas.');
+        } else if (status === 'CLOSED'){
+          console.log('Canal Realtime (Cárdapio) fechado.');
+          // Poderia adicionar lógica de reconexão aqui se necessário
         }
       });
-  }, []); 
 
-  // Função para gerenciar reconexões
-  const handleReconnect = useCallback((errorMessage: string) => {
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current);
-    }
-
-    if (reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
-      reconnectAttemptsRef.current += 1;
-      setReconnecting(true);
-      setError(null); 
-      
-      reconnectTimeoutRef.current = setTimeout(() => {
-        console.log(`Tentativa de reconexão ${reconnectAttemptsRef.current}/${MAX_RECONNECT_ATTEMPTS}...`);
-        setupRealtimeChannel();
-      }, RECONNECT_DELAY * Math.pow(2, reconnectAttemptsRef.current - 1)); 
-    } else {
-      setReconnecting(false);
-      setError(`Erro de conexão em tempo real (Cardápio): ${errorMessage} - Falha após ${MAX_RECONNECT_ATTEMPTS} tentativas. Atualize a página.`);
-    }
-  }, [setupRealtimeChannel]);
-
-  // Efeito para inicializar e limpar o canal Realtime
-  useEffect(() => {
-    fetchItensCardapio('initial mount');
-    setupRealtimeChannel();
-
+    // Limpeza ao desmontar o componente
     return () => {
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-      }
       if (cardapioChannelRef.current) {
         supabase.removeChannel(cardapioChannelRef.current)
           .then(status => console.log('Canal Realtime (Cárdapio) removido, status:', status))
@@ -205,18 +148,19 @@ const CardapioPage: React.FC = () => {
         cardapioChannelRef.current = null;
       }
     };
-  }, [fetchItensCardapio, setupRealtimeChannel]);
+  }, [fetchItensCardapio]);
 
-  // Handlers para o modal de adição
+  // Handlers para o formulário de novo item
   const handleNovoItemInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     setNovoItem(prev => ({ ...prev, [name]: value }));
   };
   
   const handleNovoItemDisponivelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    setNovoItem(prev => ({ ...prev, disponivel: e.target.value as 'Sim' | 'Não' }));
+    setNovoItem(prev => ({ ...prev, disponivel: e.target.value === 'true' }));
   };
 
+  // Adiciona novo item ao banco de dados
   const handleAddNewItem = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!novoItem.nome_produto || !novoItem.categoria) {
@@ -224,25 +168,17 @@ const CardapioPage: React.FC = () => {
       return;
     }
     setSaving(true);
-    
-    // Não precisa calcular maxId, o Supabase deve gerar o ID
-    // const maxId = itensCardapio.reduce((max, item) => Math.max(max, item.id), 0);
-    // const nextId = maxId + 1;
-    
     const itemParaSalvar = {
-        // id: nextId, // Deixar o DB gerar o ID
         nome_produto: novoItem.nome_produto,
         categoria: novoItem.categoria,
         disponivel: novoItem.disponivel,
         descricao_produto: novoItem.descricao_produto || null,
         observacao: novoItem.observacao || null,
-        promocoes: novoItem.promocoes || null,
+        promocao: novoItem.promocao || null, // Adicionado campo promoção
     };
-    
     const { error: insertError } = await supabase
-      .from('Cárdapio') // Confirmar nome da tabela
+      .from('Cárdapio')
       .insert([itemParaSalvar]);
-      
     setSaving(false);
     if (insertError) {
       console.error('Erro ao adicionar novo item:', insertError);
@@ -250,29 +186,32 @@ const CardapioPage: React.FC = () => {
     } else {
       alert('Novo item adicionado com sucesso!');
       setIsAddModalOpen(false);
+      // Limpa o formulário
       setNovoItem({ 
         nome_produto: '',
-        categoria: categoriasOrdenadas[0],
-        disponivel: 'Sim',
+        categoria: categoriasOrdem[0],
+        disponivel: true,
         descricao_produto: '',
         observacao: '',
-        promocoes: '',
+        promocao: '',
       });
-      // Realtime deve atualizar a lista
+      // O Realtime deve atualizar a lista, mas podemos forçar se necessário
+      // fetchItensCardapio('after add');
     }
   };
 
-  // Handlers para o modal de exclusão
+  // Abre modal de confirmação para deletar item
   const openDeleteConfirmationModal = (item: CardapioItem) => {
     setItemToDelete(item);
     setIsConfirmDeleteModalOpen(true);
   };
 
+  // Deleta item do banco de dados
   const handleDeleteItem = async () => {
     if (!itemToDelete) return;
     setSaving(true);
     const { error: deleteError } = await supabase
-      .from('Cárdapio') // Confirmar nome da tabela
+      .from('Cárdapio')
       .delete()
       .match({ id: itemToDelete.id });
     setSaving(false);
@@ -283,91 +222,89 @@ const CardapioPage: React.FC = () => {
       alert(`Item "${itemToDelete.nome_produto}" removido com sucesso!`);
       setIsConfirmDeleteModalOpen(false);
       setItemToDelete(null);
-      // Realtime deve atualizar a lista
+      // O Realtime deve atualizar a lista
+      // fetchItensCardapio('after delete');
     }
   };
 
-  // Handlers para edição inline
+  // Ativa/desativa modo de edição para um item
   const toggleEditMode = (itemId: number) => {
     setItensCardapio(prevItens =>
       prevItens.map(item => {
         if (item.id === itemId) {
           if (!item.isEditing) {
+            // Entrando no modo de edição: guarda o estado original
+            setEditedItems(prev => ({ ...prev, [itemId]: {} })); // Inicia rastreamento
             return {
               ...item,
               isEditing: true,
-              originalNome: item.nome_produto,
-              originalCategoria: item.categoria,
-              originalDisponivel: item.disponivel,
-              originalDescricao: item.descricao_produto,
-              originalObservacao: item.observacao,
-              originalPromocoes: item.promocoes,
             };
           } else {
-            // Ao cancelar, restaura os valores originais
+            // Saindo do modo de edição (cancelando): restaura o estado original
+            const originalItem = itensCardapio.find(i => i.id === itemId); // Pega o estado atual do DB (ou o último salvo)
+            setEditedItems(prev => {
+                const newState = { ...prev };
+                delete newState[itemId]; // Para de rastrear
+                return newState;
+            });
             return {
-              ...item,
+              ...originalItem,
               isEditing: false,
-              nome_produto: item.originalNome ?? item.nome_produto,
-              categoria: item.originalCategoria ?? item.categoria,
-              disponivel: item.originalDisponivel ?? item.disponivel,
-              descricao_produto: item.originalDescricao ?? item.descricao_produto,
-              observacao: item.originalObservacao ?? item.observacao,
-              promocoes: item.originalPromocoes ?? item.promocoes,
-            };
+            } as CardapioItem; // Garante que o tipo está correto
           }
         }
-        // Se outro item estiver sendo editado, cancela a edição dele
-        // return { ...item, isEditing: false }; 
-        // Decisão: Permitir múltiplos edits ou apenas um por vez?
-        // Por enquanto, permite múltiplos, mas o botão Salvar Todos salva todos.
-        return item; 
+        return item;
       })
     );
   };
 
+  // Handler para mudanças nos inputs de edição
   const handleEditInputChange = (itemId: number, field: keyof CardapioItem, value: any) => {
     setItensCardapio(prevItens =>
       prevItens.map(item =>
         item.id === itemId ? { ...item, [field]: value } : item
       )
     );
+    // Atualiza o estado de itens editados
+    setEditedItems(prev => ({
+        ...prev,
+        [itemId]: { ...prev[itemId], [field]: value }
+    }));
   };
 
-  // Itens com alterações pendentes
+  // Calcula quais itens têm alterações pendentes
   const itemsComAlteracoes = useMemo(() => {
-    return itensCardapio.filter(item => 
-      item.isEditing && 
-      (item.nome_produto !== item.originalNome ||
-       item.categoria !== item.originalCategoria ||
-       item.disponivel !== item.originalDisponivel ||
-       item.descricao_produto !== item.originalDescricao ||
-       item.observacao !== item.originalObservacao ||
-       item.promocoes !== item.originalPromocoes)
-    );
-  }, [itensCardapio]);
+    return Object.keys(editedItems).filter(idStr => {
+        const id = parseInt(idStr, 10);
+        const itemAtual = itensCardapio.find(i => i.id === id);
+        const alteracoes = editedItems[id];
+        if (!itemAtual || !alteracoes) return false;
+        // Verifica se algum campo rastreado foi alterado
+        return Object.keys(alteracoes).some(key => alteracoes[key as keyof CardapioItem] !== itemAtual[key as keyof CardapioItem]);
+    }).map(idStr => itensCardapio.find(i => i.id === parseInt(idStr, 10))).filter(Boolean) as CardapioItem[];
+  }, [itensCardapio, editedItems]);
 
-  // Salvar todas as alterações
+  // Salva todas as alterações pendentes
   const handleSaveAllChanges = async () => {
     if (itemsComAlteracoes.length === 0) {
-      // alert("Nenhuma alteração para salvar."); // Pode ser silencioso
-      // Apenas desativa o modo de edição dos itens que não mudaram
-       setItensCardapio(prev => prev.map(item => item.isEditing ? { ...item, isEditing: false } : item));
+      alert("Nenhuma alteração para salvar.");
       return;
     }
     setSaving(true);
     const updates = itemsComAlteracoes.map(item => {
-      const { id, nome_produto, categoria, disponivel, descricao_produto, observacao, promocoes } = item;
+      const { id, nome_produto, categoria, disponivel, descricao_produto, observacao, promocao } = item;
+      // Monta o objeto apenas com os campos que podem ser atualizados
+      const updateData: Partial<CardapioItem> = {
+        nome_produto,
+        categoria,
+        disponivel,
+        descricao_produto,
+        observacao,
+        promocao,
+      };
       return supabase
-        .from('Cárdapio') // Confirmar nome da tabela
-        .update({ 
-          nome_produto, 
-          categoria, 
-          disponivel, 
-          descricao_produto, 
-          observacao,
-          promocoes
-        })
+        .from('Cárdapio')
+        .update(updateData)
         .match({ id });
     });
 
@@ -379,14 +316,9 @@ const CardapioPage: React.FC = () => {
         alert(`Houve ${errors.length} erro(s) ao salvar. Verifique o console.`);
       } else {
         alert("Todas as alterações foram salvas com sucesso!");
-        setItensCardapio(prev => prev.map(item => {
-          if (itemsComAlteracoes.some(changedItem => changedItem.id === item.id)) {
-            // Limpa o estado original e sai do modo de edição após salvar
-            const { originalNome, originalCategoria, originalDisponivel, originalDescricao, originalObservacao, originalPromocoes, ...rest } = item;
-            return { ...rest, isEditing: false };
-          }
-          return item;
-        }));
+        // Sai do modo de edição para os itens salvos e limpa o rastreamento
+        setItensCardapio(prev => prev.map(item => itemsComAlteracoes.find(i => i.id === item.id) ? {...item, isEditing: false} : item));
+        setEditedItems({}); // Limpa todos os itens editados
       }
     } catch (e) {
       console.error("Erro geral ao salvar alterações:", e);
@@ -395,154 +327,122 @@ const CardapioPage: React.FC = () => {
     setSaving(false);
   };
 
-  // Loading e Error States
+  // Renderização condicional de loading e erro inicial
   if (loading && itensCardapio.length === 0) {
     return <div className="text-center p-10"><Loader2 className="h-12 w-12 text-pink-500 animate-spin mx-auto" /></div>;
   }
 
   if (error && itensCardapio.length === 0) {
-    return (
-      <div className="text-center p-10">
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg shadow-sm">
-          <p className="text-xl font-semibold mb-2">Erro ao Carregar Cardápio</p>
-          <p className="mb-3">{error}</p>
-          {!reconnecting && reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS && (
-            <button 
-              onClick={() => {
-                reconnectAttemptsRef.current = 0;
-                setError(null);
-                fetchItensCardapio('retry button');
-                setupRealtimeChannel();
-              }}
-              className="mt-3 bg-red-600 hover:bg-red-700 text-white font-medium py-2 px-4 rounded-lg transition-colors"
-            >
-              Tentar Novamente
-            </button>
-          )}
-        </div>
-      </div>
-    );
+    return <div className="text-center p-10"><p className="text-xl text-red-600 bg-red-100 p-4 rounded-lg">{error}</p></div>;
   }
 
-  // Agrupar itens por categoria na ordem correta
-  const categoriasMapeadas = useMemo(() => {
-    const grouped: Record<string, CardapioItem[]> = {};
-    // Inicializa todas as categorias ordenadas
-    categoriasOrdenadas.forEach(cat => grouped[cat] = []);
-    
-    // Agrupa os itens
-    itensCardapio.forEach(item => {
-      const categoria = item.categoria || 'Sem Categoria';
-      if (!grouped[categoria]) {
-        grouped[categoria] = []; // Cria se não existir (caso raro)
-      }
-      grouped[categoria].push(item);
-    });
+  // Agrupa itens por categoria para renderização
+  const groupedItens = itensCardapio.reduce((acc, item) => {
+    const categoria = item.categoria || "Sem Categoria"; // Agrupa itens sem categoria
+    if (!acc[categoria]) {
+      acc[categoria] = [];
+    }
+    acc[categoria].push(item);
+    return acc;
+  }, {} as Record<string, CardapioItem[]>);
 
-    // Ordena itens dentro de cada categoria alfabeticamente
-    Object.keys(grouped).forEach(categoria => {
-        grouped[categoria].sort((a, b) => a.nome_produto.localeCompare(b.nome_produto));
-    });
-
-    return grouped;
-  }, [itensCardapio]);
-
-  // Renderização principal
+  // Renderização principal da página
   return (
-    <div className="container mx-auto p-4 pb-20">
-      {/* Mensagem de erro não bloqueante */}
+    // Adicionado padding-bottom maior para não cobrir o último card com o botão sticky
+    <div className="container mx-auto p-4 pb-32 relative">
+      {/* Exibe erro não bloqueante */}
       {error && itensCardapio.length > 0 && (
-         <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg shadow-sm flex items-center justify-center">
-            <AlertTriangle size={20} className="mr-2 flex-shrink-0" /> 
-            <span className="flex-grow text-center text-sm sm:text-base">{error}</span>
-            {reconnecting && <Loader2 size={20} className="animate-spin ml-2 flex-shrink-0" />}
+         <div className="mb-4 p-3 bg-red-100 text-red-700 rounded-md text-center shadow-sm">
+            <AlertTriangle size={20} className="inline mr-2" /> {error}
          </div>
       )}
-      
-      {/* Cabeçalho e Botão Adicionar */}
+      {/* Cabeçalho com botão Adicionar */}
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-3xl font-semibold text-gray-700">Itens do Cardápio</h2>
         <button
           onClick={() => setIsAddModalOpen(true)}
-          className="bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md flex items-center transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-pink-400 focus:ring-offset-1"
+          className="bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md flex items-center transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-green-400 focus:ring-opacity-70"
         >
           <PlusCircle size={20} className="mr-2" />
           Adicionar Novo Item
         </button>
       </div>
 
-      {/* Banner Salvar Alterações (Sticky) */}
+      {/* Botão Salvar Alterações - AGORA STICKY */}
       {itemsComAlteracoes.length > 0 && (
-        <div className="sticky top-4 z-40 mb-4">
-            <div className="bg-blue-50 border border-blue-200 text-blue-800 p-4 rounded-lg shadow-md flex flex-col sm:flex-row justify-between items-center space-y-2 sm:space-y-0">
-                <div className="flex items-center">
-                    <AlertTriangle size={20} className="mr-2 flex-shrink-0 text-blue-600" />
-                    <span>Você tem {itemsComAlteracoes.length} item(ns) com alterações não salvas.</span>
-                </div>
-                <button
-                    onClick={handleSaveAllChanges}
-                    disabled={saving}
-                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow flex items-center transition-all duration-150 w-full sm:w-auto justify-center focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-1"
-                >
-                    {saving ? <Loader2 size={18} className="animate-spin mr-2" /> : <Save size={18} className="mr-2" />}
-                    {saving ? 'Salvando...' : 'Salvar Alterações'}
-                </button>
-            </div>
+        // Usa 'sticky' e 'bottom-4' para fixar perto do final da viewport ao rolar
+        // 'z-40' para garantir que fique acima dos cards
+        <div className="sticky bottom-4 w-full flex justify-center z-40 px-4">
+            <button
+                onClick={handleSaveAllChanges}
+                disabled={saving}
+                className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg shadow-xl flex items-center text-lg transition-all duration-150 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-opacity-70"
+            >
+                {saving ? <Loader2 size={24} className="animate-spin mr-2" /> : <Save size={24} className="mr-2" />}
+                {saving ? 'Salvando...' : `Salvar ${itemsComAlteracoes.length} Alterações`}
+            </button>
         </div>
       )}
 
-      {/* Modal Adicionar Item */}
+      {/* Modal Adicionar Item - Com footer fixo */}
       {isAddModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-          <div className="bg-white p-6 sm:p-8 rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
-            <h3 className="text-2xl font-semibold mb-6 text-gray-800 text-center flex-shrink-0">Adicionar Novo Item</h3>
-            <form id="add-item-form" onSubmit={handleAddNewItem} className="flex-grow overflow-y-auto pr-2 space-y-4 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
-              {/* Campos do formulário (mantidos) */}
-              <div>
+          {/* Estrutura flex column para footer fixo */}
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg flex flex-col max-h-[90vh]">
+            {/* Cabeçalho Fixo */}
+            <div className="p-6 border-b border-gray-200">
+                <h3 className="text-2xl font-semibold text-gray-800">Adicionar Novo Item</h3>
+            </div>
+            {/* Conteúdo Rolável */}
+            <form onSubmit={handleAddNewItem} className="overflow-y-auto flex-grow p-6">
+              {/* Campos do formulário... */}
+              <div className="mb-4">
                 <label htmlFor="nome_produto_novo" className="block text-sm font-medium text-gray-700 mb-1">Nome do Produto</label>
-                <input type="text" name="nome_produto" id="nome_produto_novo" value={novoItem.nome_produto || ''} onChange={handleNovoItemInputChange} required className="w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-300 focus:border-pink-400 transition-colors" />
+                <input type="text" name="nome_produto" id="nome_produto_novo" value={novoItem.nome_produto || ''} onChange={handleNovoItemInputChange} required className="input-field" />
               </div>
-              <div>
+              <div className="mb-4">
                 <label htmlFor="categoria_novo" className="block text-sm font-medium text-gray-700 mb-1">Categoria</label>
-                <select name="categoria" id="categoria_novo" value={novoItem.categoria} onChange={handleNovoItemInputChange} required className="w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-300 focus:border-pink-400 transition-colors appearance-none bg-white bg-no-repeat bg-right pr-8" style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`}}>
-                  {categoriasOrdenadas.map(cat => (<option key={cat} value={cat}>{cat}</option>))}
+                <select name="categoria" id="categoria_novo" value={novoItem.categoria} onChange={handleNovoItemInputChange} required className="input-field">
+                  {categoriasOrdem.map(cat => (<option key={cat} value={cat}>{cat}</option>))}
                 </select>
               </div>
-              <div>
+              <div className="mb-4">
                 <label htmlFor="disponivel_novo" className="block text-sm font-medium text-gray-700 mb-1">Disponível</label>
-                <select name="disponivel" id="disponivel_novo" value={novoItem.disponivel} onChange={handleNovoItemDisponivelChange} required className="w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-300 focus:border-pink-400 transition-colors appearance-none bg-white bg-no-repeat bg-right pr-8" style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`}}>
-                  <option value="Sim">Sim</option>
-                  <option value="Não">Não</option>
+                <select name="disponivel" id="disponivel_novo" value={novoItem.disponivel ? 'true' : 'false'} onChange={handleNovoItemDisponivelChange} required className="input-field">
+                  <option value="true">Sim</option>
+                  <option value="false">Não</option>
                 </select>
               </div>
-              <div>
+              <div className="mb-4">
                 <label htmlFor="descricao_produto_novo" className="block text-sm font-medium text-gray-700 mb-1">Descrição</label>
-                <textarea name="descricao_produto" id="descricao_produto_novo" value={novoItem.descricao_produto || ''} onChange={handleNovoItemInputChange} rows={3} className="w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-300 focus:border-pink-400 transition-colors" />
+                <textarea name="descricao_produto" id="descricao_produto_novo" value={novoItem.descricao_produto || ''} onChange={handleNovoItemInputChange} rows={3} className="input-field" />
               </div>
-              <div>
-                <label htmlFor="promocoes_novo" className="block text-sm font-medium text-gray-700 mb-1">Promoções</label>
-                <textarea name="promocoes" id="promocoes_novo" value={novoItem.promocoes || ''} onChange={handleNovoItemInputChange} rows={2} className="w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-300 focus:border-pink-400 transition-colors" />
-              </div>
-              <div>
+              <div className="mb-4">
                 <label htmlFor="observacao_novo" className="block text-sm font-medium text-gray-700 mb-1">Observação</label>
-                <textarea name="observacao" id="observacao_novo" value={novoItem.observacao || ''} onChange={handleNovoItemInputChange} rows={2} className="w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-300 focus:border-pink-400 transition-colors" />
+                <textarea name="observacao" id="observacao_novo" value={novoItem.observacao || ''} onChange={handleNovoItemInputChange} rows={2} className="input-field" />
+              </div>
+              <div className="mb-4">
+                <label htmlFor="promocao_novo" className="block text-sm font-medium text-gray-700 mb-1">Promoção</label>
+                <textarea name="promocao" id="promocao_novo" value={novoItem.promocao || ''} onChange={handleNovoItemInputChange} rows={2} className="input-field" />
               </div>
             </form>
-            {/* Rodapé Fixo com Botões */}
-            <div className="mt-6 pt-4 border-t border-gray-200 flex justify-end space-x-3 flex-shrink-0">
-              <button type="button" onClick={() => setIsAddModalOpen(false)} disabled={saving} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg transition-colors flex items-center focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-1">
-                <XCircle size={18} className="mr-1.5"/> Cancelar
+            {/* Rodapé Fixo */}
+            <div className="p-4 bg-gray-50 border-t border-gray-200 flex justify-end space-x-3 rounded-b-xl">
+              <button type="button" onClick={() => setIsAddModalOpen(false)} disabled={saving} className="btn-secondary">
+                <XCircle size={18} className="inline mr-1"/> Cancelar
               </button>
-              <button type="submit" form="add-item-form" disabled={saving} className="px-4 py-2 bg-pink-500 hover:bg-pink-600 text-white rounded-lg shadow transition-colors flex items-center focus:outline-none focus:ring-2 focus:ring-pink-400 focus:ring-offset-1">
-                {saving ? <Loader2 size={18} className="mr-1.5 animate-spin"/> : <Save size={18} className="mr-1.5"/>}
+              <button type="submit" form="add-item-form" disabled={saving} className="btn-primary bg-green-500 hover:bg-green-600">
+                {saving ? <Loader2 size={18} className="inline mr-1 animate-spin"/> : <Save size={18} className="inline mr-1"/>}
                 {saving ? 'Salvando...' : 'Salvar Novo Item'}
               </button>
             </div>
+            {/* Adiciona um ID ao form para o botão submit externo funcionar */}
+            <form id="add-item-form" onSubmit={handleAddNewItem} className="hidden"></form>
           </div>
         </div>
       )}
 
-      {/* Modal Confirmar Exclusão */}
+      {/* Modal Confirmar Remoção */}
       {isConfirmDeleteModalOpen && itemToDelete && (
          <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md">
@@ -555,11 +455,11 @@ const CardapioPage: React.FC = () => {
                 </p>
             </div>
             <div className="flex justify-center space-x-4">
-              <button onClick={() => setIsConfirmDeleteModalOpen(false)} disabled={saving} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-1">
+              <button onClick={() => setIsConfirmDeleteModalOpen(false)} disabled={saving} className="btn-secondary">
                 Cancelar
               </button>
-              <button onClick={handleDeleteItem} disabled={saving} className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg shadow transition-colors flex items-center focus:outline-none focus:ring-2 focus:ring-red-400 focus:ring-offset-1">
-                {saving ? <Loader2 size={18} className="mr-1.5 animate-spin"/> : <Trash2 size={18} className="mr-1.5"/>}
+              <button onClick={handleDeleteItem} disabled={saving} className="btn-danger">
+                {saving ? <Loader2 size={18} className="inline mr-1 animate-spin"/> : <Trash2 size={18} className="inline mr-1"/>}
                 {saving ? 'Removendo...' : 'Confirmar Remoção'}
               </button>
             </div>
@@ -567,7 +467,7 @@ const CardapioPage: React.FC = () => {
         </div>
       )}
 
-      {/* Mensagem de Nenhum Item */}
+      {/* Mensagem de cardápio vazio */}
       {itensCardapio.length === 0 && !loading && !error && (
         <div className="text-center text-gray-500 mt-12">
           <p className="text-2xl mb-2">Nenhum item no cardápio ainda.</p>
@@ -575,163 +475,140 @@ const CardapioPage: React.FC = () => {
         </div>
       )}
       
-      {/* Lista de Categorias e Itens - Renderizando na ordem correta */}
-      {categoriasOrdenadas.map((categoria) => {
-        const itensDaCategoria = categoriasMapeadas[categoria];
-        if (!itensDaCategoria || itensDaCategoria.length === 0) return null; // Pula categorias vazias
-        
-        return (
+      {/* Renderização das categorias e itens */}
+      {categoriasOrdem.map(categoria => (
+        groupedItens[categoria] && groupedItens[categoria].length > 0 && (
           <div key={categoria} className="mb-10">
-            <h3 className="text-2xl font-semibold text-gray-700 mb-4 pb-2 border-b border-gray-200">{categoria}</h3>
+            <h3 className="text-2xl font-semibold text-gray-800 mb-5 border-b pb-2 border-gray-200">{categoria}</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {itensDaCategoria.map(item => (
-                <div 
-                  key={item.id} 
-                  // Estilo do card restaurado
-                  className={`bg-white rounded-xl border border-gray-200 shadow-md hover:shadow-lg transition-all duration-300 flex flex-col h-full ${
-                    item.isEditing ? 'ring-2 ring-pink-400 ring-offset-1' : ''
-                  }`}
-                >
-                  {/* Conteúdo do Card */}
-                  <div className="p-4 flex-grow flex flex-col">
-                    {/* Nome e Disponibilidade */}
-                    <div className="text-center mb-3">
+              {groupedItens[categoria].map(item => (
+                <div key={item.id} className={`bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden transition-all duration-200 ${item.isEditing ? 'ring-2 ring-blue-400 shadow-lg' : 'hover:shadow-lg'}`}>
+                  <div className="p-5">
+                    {/* Nome do Produto - Centralizado e sem truncar */}
+                    <h4 className={`text-lg font-semibold mb-2 text-center ${item.isEditing ? 'text-blue-700' : 'text-gray-800'} whitespace-normal break-words`}>
                       {item.isEditing ? (
                         <input 
                           type="text" 
                           value={item.nome_produto}
-                          onChange={(e) => handleEditInputChange(item.id, 'nome_produto', e.target.value)} 
-                          className="w-full p-1 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pink-300 focus:border-pink-400 text-center text-lg font-semibold mb-1 transition-colors"
+                          onChange={(e) => handleEditInputChange(item.id, 'nome_produto', e.target.value)}
+                          className="input-edit text-center"
                         />
                       ) : (
-                        <h4 className="text-lg font-semibold text-gray-800 mb-1 break-words">
-                          {item.nome_produto || "(Item sem nome)"}
-                        </h4>
+                        item.nome_produto
                       )}
+                    </h4>
+                    {/* Disponibilidade */}
+                    <div className="text-center mb-3">
                       {item.isEditing ? (
                         <select 
-                          value={item.disponivel} 
-                          onChange={(e) => handleEditInputChange(item.id, 'disponivel', e.target.value as 'Sim' | 'Não')} 
-                          className="p-1 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pink-300 focus:border-pink-400 text-sm appearance-none bg-white bg-no-repeat bg-right pr-8 transition-colors" 
-                          style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`}}
+                          value={item.disponivel ? 'true' : 'false'}
+                          onChange={(e) => handleEditInputChange(item.id, 'disponivel', e.target.value === 'true')}
+                          className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium border ${item.disponivel ? 'bg-green-100 text-green-800 border-green-200' : 'bg-red-100 text-red-800 border-red-200'}`}
                         >
-                          <option value="Sim">Disponível</option>
-                          <option value="Não">Indisponível</option>
+                          <option value="true">Disponível</option>
+                          <option value="false">Indisponível</option>
                         </select>
                       ) : (
-                        <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium inline-block border ${
-                          item.disponivel === 'Sim' 
-                            ? 'bg-green-50 text-green-700 border-green-200'
-                            : 'bg-red-50 text-red-700 border-red-200'
-                        }`}>
-                          {item.disponivel}
+                        <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-medium ${item.disponivel ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                          {item.disponivel ? 'Disponível' : 'Indisponível'}
                         </span>
                       )}
                     </div>
                     
-                    {/* Categoria (apenas em modo de edição) */}
-                    {item.isEditing && (
+                    {/* Descrição - Justificada e sem truncar */}
+                    {(item.descricao_produto || item.isEditing) && (
                       <div className="mb-3">
-                        <label className="block text-xs font-medium text-gray-500 mb-0.5">Categoria:</label>
+                        <label className="block text-xs font-medium text-gray-500 mb-1">Descrição:</label>
+                        {item.isEditing ? (
+                          <textarea 
+                            value={item.descricao_produto || ''}
+                            onChange={(e) => handleEditInputChange(item.id, 'descricao_produto', e.target.value)}
+                            rows={3}
+                            className="input-edit text-sm"
+                          />
+                        ) : (
+                          <p className="text-sm text-gray-600 text-justify whitespace-normal break-words">
+                            {item.descricao_produto}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Observação - Justificada e sem truncar */}
+                    {(item.observacao || item.isEditing) && (
+                      <div className="mb-3">
+                        <label className="block text-xs font-medium text-gray-500 mb-1">Observação:</label>
+                        {item.isEditing ? (
+                          <textarea 
+                            value={item.observacao || ''}
+                            onChange={(e) => handleEditInputChange(item.id, 'observacao', e.target.value)}
+                            rows={2}
+                            className="input-edit text-sm"
+                          />
+                        ) : (
+                          <p className="text-sm text-gray-600 text-justify whitespace-normal break-words">
+                            {item.observacao}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Promoção - Justificada e sem truncar */}
+                    {(item.promocao || item.isEditing) && (
+                      <div className="mb-3 bg-pink-50 p-2 rounded-md border border-pink-100">
+                        <label className="block text-xs font-medium text-pink-700 mb-1">Promoção:</label>
+                        {item.isEditing ? (
+                          <textarea 
+                            value={item.promocao || ''}
+                            onChange={(e) => handleEditInputChange(item.id, 'promocao', e.target.value)}
+                            rows={2}
+                            className="input-edit text-sm bg-white"
+                          />
+                        ) : (
+                          <p className="text-sm text-pink-800 text-justify whitespace-normal break-words">
+                            {item.promocao}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Categoria (apenas editável) */}
+                    {item.isEditing && (
+                       <div className="mb-3">
+                        <label className="block text-xs font-medium text-gray-500 mb-1">Categoria:</label>
                         <select 
-                          value={item.categoria} 
-                          onChange={(e) => handleEditInputChange(item.id, 'categoria', e.target.value)} 
-                          className="w-full p-1 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pink-300 focus:border-pink-400 text-sm appearance-none bg-white bg-no-repeat bg-right pr-8 transition-colors"
-                          style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`}}
+                          value={item.categoria}
+                          onChange={(e) => handleEditInputChange(item.id, 'categoria', e.target.value)}
+                          className="input-edit text-sm"
                         >
-                          {categoriasOrdenadas.map(cat => (
-                            <option key={cat} value={cat}>{cat}</option>
-                          ))}
-                          {/* Adiciona a categoria atual se não estiver na lista padrão */}
-                          {!categoriasOrdenadas.includes(item.categoria) && <option value={item.categoria}>{item.categoria}</option>}
+                          {categoriasOrdem.map(cat => (<option key={cat} value={cat}>{cat}</option>))}
                         </select>
                       </div>
                     )}
-                    
-                    {/* Descrição */}
-                    {(item.descricao_produto || item.isEditing) && (
-                      <div className="mb-3">
-                        <h5 className="text-sm font-medium text-gray-700 mb-0.5">Descrição:</h5>
-                        {item.isEditing ? (
-                          <textarea 
-                            value={item.descricao_produto || ''} 
-                            onChange={(e) => handleEditInputChange(item.id, 'descricao_produto', e.target.value)} 
-                            rows={3} 
-                            className="w-full p-1 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pink-300 focus:border-pink-400 text-sm transition-colors"
-                          />
-                        ) : (
-                          <p className="text-gray-600 text-sm text-justify break-words">{item.descricao_produto}</p>
-                        )}
-                      </div>
-                    )}
-                    
-                    {/* Promoções */}
-                    {(item.promocoes || item.isEditing) && (
-                      <div className="mb-3">
-                        <h5 className="text-sm font-medium text-gray-700 mb-0.5">Promoções:</h5>
-                        {item.isEditing ? (
-                          <textarea 
-                            value={item.promocoes || ''} 
-                            onChange={(e) => handleEditInputChange(item.id, 'promocoes', e.target.value)} 
-                            rows={2} 
-                            className="w-full p-1 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pink-300 focus:border-pink-400 text-sm transition-colors"
-                          />
-                        ) : (
-                          <div className="bg-pink-50 border border-pink-100 text-pink-800 p-2 rounded-lg text-sm text-justify break-words">
-                            {item.promocoes}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    
-                    {/* Observação */}
-                    {(item.observacao || item.isEditing) && (
-                      <div className="mb-3">
-                        <h5 className="text-sm font-medium text-gray-700 mb-0.5">Observação:</h5>
-                        {item.isEditing ? (
-                          <textarea 
-                            value={item.observacao || ''} 
-                            onChange={(e) => handleEditInputChange(item.id, 'observacao', e.target.value)} 
-                            rows={2} 
-                            className="w-full p-1 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pink-300 focus:border-pink-400 text-sm transition-colors"
-                          />
-                        ) : (
-                          <p className="text-gray-600 italic text-sm text-justify break-words">{item.observacao}</p>
-                        )}
-                      </div>
-                    )}
                   </div>
-                  
-                  {/* Botões de Ação (Sempre no final) - Estilo restaurado */}
-                  <div className="p-3 border-t border-gray-100 bg-gray-50 mt-auto flex justify-center space-x-3">
-                    {item.isEditing ? (
-                      <button 
-                        onClick={() => toggleEditMode(item.id)} // Botão Cancelar
-                        className="px-4 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-200 rounded-lg shadow-sm text-sm font-medium transition-all duration-150 flex items-center focus:outline-none focus:ring-2 focus:ring-gray-300 focus:ring-offset-1"
-                      >
-                        <XCircle size={14} className="mr-1.5" /> Cancelar
-                      </button>
-                    ) : (
-                      <button 
-                        onClick={() => toggleEditMode(item.id)} // Botão Editar
-                        className="px-4 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg shadow-sm text-sm font-medium transition-all duration-150 flex items-center focus:outline-none focus:ring-2 focus:ring-blue-300 focus:ring-offset-1"
-                      >
-                        <Edit3 size={14} className="mr-1.5" /> Editar
-                      </button>
-                    )}
+                  {/* Botões de Ação */}
+                  <div className="bg-gray-50 px-4 py-3 flex justify-end space-x-2 border-t border-gray-200">
                     <button 
-                      onClick={() => openDeleteConfirmationModal(item)} // Botão Excluir
-                      className="px-4 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg shadow-sm text-sm font-medium transition-all duration-150 flex items-center focus:outline-none focus:ring-2 focus:ring-red-300 focus:ring-offset-1"
+                      onClick={() => toggleEditMode(item.id)}
+                      className={`btn-icon ${item.isEditing ? 'btn-secondary' : 'btn-primary-outline'}`}
+                      title={item.isEditing ? "Cancelar Edição" : "Editar Item"}
                     >
-                      <Trash2 size={14} className="mr-1.5" /> Excluir
+                      {item.isEditing ? <XCircle size={18} /> : <Edit3 size={18} />}
+                    </button>
+                    <button 
+                      onClick={() => openDeleteConfirmationModal(item)}
+                      className="btn-icon btn-danger-outline"
+                      title="Remover Item"
+                    >
+                      <Trash2 size={18} />
                     </button>
                   </div>
                 </div>
               ))}
             </div>
           </div>
-        );
-      })}
+        )
+      ))}
     </div>
   );
 };

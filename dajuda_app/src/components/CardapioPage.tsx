@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '../supabaseClient';
 import { PlusCircle, Save, XCircle, Trash2, Edit3, AlertTriangle, Loader2 } from 'lucide-react';
-// Removido import não utilizado de RealtimeChannelSendResponse
 import type { RealtimeChannel, RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 
 // Interface para o item do cardápio
@@ -35,19 +34,20 @@ const categoriasDefinidas = [
 const MAX_RETRIES = 5;
 const INITIAL_RETRY_DELAY = 5000; // 5 segundos
 
-// Definindo um tipo mais específico para o payload, esperando que new/old sejam do tipo CardapioItem (ou parcial)
-// Nota: O Supabase pode enviar outras propriedades, mas focamos nas que usamos.
-type CardapioPayload = RealtimePostgresChangesPayload<Partial<CardapioItem> & { [key: string]: any }>;
+// Type guard para verificar se um objeto tem a propriedade 'id'
+function hasId(obj: any): obj is { id: number } {
+  return typeof obj === 'object' && obj !== null && typeof obj.id === 'number';
+}
 
 // Função auxiliar para mapear dados do Supabase para o formato do estado
 const mapSupabaseItemToState = (item: any): CardapioItem => ({
-  id: item.id || 0,
-  nome_produto: item.nome_produto || '',
-  categoria: item.categoria || '',
-  disponivel: item.disponivel === 'Sim' || item.disponivel === true ? 'Sim' : 'Não',
-  descricao_produto: item.descricao_produto || '',
-  observacao: item.observacao || '',
-  promocoes: item.promocoes || '',
+  id: item?.id || 0,
+  nome_produto: item?.nome_produto || '',
+  categoria: item?.categoria || '',
+  disponivel: item?.disponivel === 'Sim' || item?.disponivel === true ? 'Sim' : 'Não',
+  descricao_produto: item?.descricao_produto || '',
+  observacao: item?.observacao || '',
+  promocoes: item?.promocoes || '',
 });
 
 const CardapioPage: React.FC = () => {
@@ -104,29 +104,42 @@ const CardapioPage: React.FC = () => {
     console.log("[CardapioPage] Tentando conectar ao canal Realtime...");
     const channel = supabase.channel('cardapio_realtime_channel');
 
-    // Handler com a tipagem corrigida para o payload
-    const handleRealtimeChange = (payload: CardapioPayload) => {
+    // Handler com tipagem mais segura e type guards
+    const handleRealtimeChange = (payload: RealtimePostgresChangesPayload<any>) => {
         console.log("[CardapioPage] Mudança Realtime recebida:", payload);
+
+        // Verifica se eventType existe e é uma string
+        if (typeof payload.eventType !== 'string') {
+            console.warn("[CardapioPage] Evento Realtime sem eventType válido:", payload);
+            return;
+        }
+
         setItensCardapio(currentItems => {
             let updatedItems = [...currentItems];
-            // Acessando 'id' de forma segura, sabendo que pode estar em 'new' ou 'old'
-            const recordId = payload.new?.id ?? payload.old?.id;
+            let recordId: number | undefined = undefined;
+
+            // Tenta obter o ID de forma segura
+            if (hasId(payload.new)) {
+                recordId = payload.new.id;
+            } else if (hasId(payload.old)) {
+                recordId = payload.old.id;
+            }
 
             switch (payload.eventType) {
                 case 'INSERT':
-                    if (recordId && !updatedItems.some(item => item.id === recordId)) {
-                        // Mapeia o novo item para garantir a estrutura correta
+                    // Verifica se 'new' existe e tem 'id'
+                    if (recordId && hasId(payload.new) && !updatedItems.some(item => item.id === recordId)) {
                         updatedItems.push(mapSupabaseItemToState(payload.new));
                         console.log(`[CardapioPage] Item ${recordId} inserido via Realtime.`);
                     }
                     break;
                 case 'UPDATE':
-                    if (recordId) {
+                    // Verifica se 'new' existe e tem 'id'
+                    if (recordId && hasId(payload.new)) {
                         updatedItems = updatedItems.map(item => {
                             if (item.id === recordId) {
                                 if (!item.isEditing) {
                                     console.log(`[CardapioPage] Item ${recordId} atualizado via Realtime (não estava em edição).`);
-                                    // Mapeia o item atualizado
                                     return mapSupabaseItemToState(payload.new);
                                 } else {
                                     console.log(`[CardapioPage] Item ${recordId} ignorado na atualização Realtime (está em edição local).`);
@@ -138,10 +151,10 @@ const CardapioPage: React.FC = () => {
                     }
                     break;
                 case 'DELETE':
-                    const deletedId = payload.old?.id;
-                    if (deletedId) {
-                        updatedItems = updatedItems.filter(item => item.id !== deletedId);
-                        console.log(`[CardapioPage] Item ${deletedId} removido via Realtime.`);
+                    // Verifica se 'old' existe e tem 'id'
+                    if (recordId && hasId(payload.old)) {
+                        updatedItems = updatedItems.filter(item => item.id !== recordId);
+                        console.log(`[CardapioPage] Item ${recordId} removido via Realtime.`);
                     }
                     break;
                 default:
@@ -383,7 +396,6 @@ const CardapioPage: React.FC = () => {
       alert(`Houve ${erros.length} erro(s) ao salvar. Verifique o console.`);
     } else {
       alert("Todas as alterações foram salvas com sucesso!");
-      // Sai do modo de edição para os itens salvos
       setItensCardapio(prevItens =>
         prevItens.map(item =>
           itensParaSalvar.some(savedItem => savedItem.id === item.id)
@@ -394,10 +406,9 @@ const CardapioPage: React.FC = () => {
     }
   };
 
-  // Agrupa itens por categoria para renderização
   const itensAgrupados = useMemo(() => {
     const grupos: { [key: string]: CardapioItem[] } = {};
-    categoriasDefinidas.forEach(cat => grupos[cat] = []); // Inicializa todas as categorias definidas
+    categoriasDefinidas.forEach(cat => grupos[cat] = []);
 
     itensCardapio.forEach(item => {
       const categoria = item.categoria || "Sem Categoria";
@@ -407,7 +418,6 @@ const CardapioPage: React.FC = () => {
       grupos[categoria].push(item);
     });
 
-    // Ordena os itens dentro de cada categoria alfabeticamente pelo nome
     Object.keys(grupos).forEach(categoria => {
       grupos[categoria].sort((a, b) => (a.nome_produto || '').localeCompare(b.nome_produto || ''));
     });
@@ -415,7 +425,6 @@ const CardapioPage: React.FC = () => {
     return grupos;
   }, [itensCardapio]);
 
-  // Estilos comuns para inputs
   const inputStyle = "mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md text-sm shadow-sm placeholder-gray-400 focus:outline-none focus:border-pink-500 focus:ring-1 focus:ring-pink-500 disabled:bg-gray-50 disabled:text-gray-500 disabled:border-gray-200 disabled:shadow-none";
   const labelStyle = "block text-sm font-medium text-gray-700";
 
@@ -473,7 +482,6 @@ const CardapioPage: React.FC = () => {
                   {itensAgrupados[categoria]?.map(item => (
                     <div key={item.id} className={`bg-white rounded-lg shadow-lg p-5 border-l-4 ${item.disponivel === 'Sim' ? 'border-green-500' : 'border-red-500'} ${item.isEditing ? 'ring-2 ring-pink-500 ring-offset-2' : ''}`}>
                       {item.isEditing ? (
-                        // Formulário de Edição Inline
                         <div className="space-y-3">
                           <div>
                             <label htmlFor={`nome-${item.id}`} className={labelStyle}>Nome</label>
@@ -496,7 +504,6 @@ const CardapioPage: React.FC = () => {
                               required
                             >
                               {categoriasDefinidas.map(cat => <option key={cat} value={cat}>{cat}</option>)}
-                              {/* Permite categorias não definidas, se existirem */}
                               {!categoriasDefinidas.includes(item.categoria) && item.categoria && (
                                 <option value={item.categoria}>{item.categoria} (Outra)</option>
                               )}
@@ -550,11 +557,9 @@ const CardapioPage: React.FC = () => {
                             <button onClick={() => toggleEditMode(item.id)} className="btn-secondary text-sm">
                               <XCircle size={16} className="inline mr-1" /> Cancelar
                             </button>
-                            {/* O botão de salvar é global agora */}
                           </div>
                         </div>
                       ) : (
-                        // Visualização Normal
                         <div className="flex flex-col h-full">
                           <div className="flex-grow">
                             <h4 className="text-xl font-bold text-gray-800 mb-1">{item.nome_produto || "(Item sem nome)"}</h4>

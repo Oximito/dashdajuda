@@ -59,10 +59,12 @@ const CardapioPage: React.FC = () => {
     if (fetchError) {
       console.error('Erro ao buscar itens do cardápio:', fetchError);
       setError(`Falha ao carregar cardápio: ${fetchError.message}`);
-      setItensCardapio([]);
+      setItensCardapio([]); // Limpa em caso de erro
     } else {
-      // **CORREÇÃO: Ordena os dados recebidos pela ordem definida em categoriasOrdem**
-      const dadosOrdenados = (data as CardapioItem[]).sort((a, b) => {
+      const dadosDoBanco = (data || []) as CardapioItem[];
+      
+      // Ordena os dados recebidos pela ordem definida em categoriasOrdem
+      const dadosOrdenados = dadosDoBanco.sort((a, b) => {
         const indexA = categoriasOrdem.indexOf(a.categoria);
         const indexB = categoriasOrdem.indexOf(b.categoria);
         if (indexA === -1 && indexB === -1) return a.nome_produto.localeCompare(b.nome_produto);
@@ -72,26 +74,30 @@ const CardapioPage: React.FC = () => {
         return a.nome_produto.localeCompare(b.nome_produto);
       });
       
-      // Mantém as edições locais não salvas
-      setItensCardapio(prevItens => {
-        const itensEditadosAtuais = prevItens.filter(item => editedItems[item.id]);
-        const mapaEditados = itensEditadosAtuais.reduce((acc, item) => {
-            acc[item.id] = { ...item, ...editedItems[item.id] };
-            return acc;
-        }, {} as Record<number, CardapioItem>);
-
-        return dadosOrdenados.map(itemDB => {
-            if (mapaEditados[itemDB.id]) {
-                return mapaEditados[itemDB.id];
-            } else {
-                return { ...itemDB, isEditing: false };
-            }
+      // **Refatoração para evitar erro #310: Atualização mais segura do estado**
+      // Mescla dados do banco com edições locais não salvas
+      setItensCardapio(currentLocalItems => {
+        const newItensMap = new Map<number, CardapioItem>();
+        // Primeiro, adiciona os itens ordenados do banco
+        dadosOrdenados.forEach(itemDB => {
+          newItensMap.set(itemDB.id, { ...itemDB, isEditing: false });
         });
+        // Depois, sobrepõe com os itens que estão sendo editados localmente
+        Object.keys(editedItems).forEach(idStr => {
+          const id = parseInt(idStr, 10);
+          const currentLocalItem = currentLocalItems.find(item => item.id === id);
+          if (currentLocalItem && currentLocalItem.isEditing) {
+            // Mantém o estado de edição e os valores editados
+            newItensMap.set(id, { ...currentLocalItem, ...editedItems[id] }); 
+          }
+        });
+        // Retorna um novo array a partir do mapa
+        return Array.from(newItensMap.values());
       });
       setError(null);
     }
     setLoading(false);
-  }, [editedItems]);
+  }, [editedItems]); // Dependência mantida
 
   // Efeito para buscar dados e configurar Realtime
   useEffect(() => {
@@ -99,6 +105,8 @@ const CardapioPage: React.FC = () => {
 
     const handleCardapioChanges = (payload: RealtimePostgresChangesPayload<{[key: string]: any}>) => {
       console.log("Mudança recebida do Supabase Realtime (Cárdapio)!", payload);
+      // **Refatoração para evitar erro #310: Atualiza chamando fetchItensCardapio**
+      // A função fetchItensCardapio já lida com a preservação das edições
       fetchItensCardapio('realtime update'); 
     };
 
@@ -172,6 +180,7 @@ const CardapioPage: React.FC = () => {
         observacao: '',
         promocao: '',
       });
+      // O Realtime deve atualizar a lista, chamando fetchItensCardapio
     }
   };
 
@@ -197,6 +206,7 @@ const CardapioPage: React.FC = () => {
       alert(`Item "${itemToDelete.nome_produto}" removido com sucesso!`);
       setIsConfirmDeleteModalOpen(false);
       setItemToDelete(null);
+      // O Realtime deve atualizar a lista
     }
   };
 
@@ -206,16 +216,19 @@ const CardapioPage: React.FC = () => {
       prevItens.map(item => {
         if (item.id === itemId) {
           if (!item.isEditing) {
-            setEditedItems(prev => ({ ...prev, [itemId]: {} }));
+            // Entrando no modo de edição: guarda o estado original para comparação
+            setEditedItems(prev => ({ ...prev, [itemId]: { ...item } })); // Guarda o estado *antes* de editar
             return { ...item, isEditing: true };
           } else {
-            const originalItem = itensCardapio.find(i => i.id === itemId);
+            // Saindo do modo de edição (cancelando): restaura o estado original
+            const originalItemData = editedItems[itemId]; // Pega o estado guardado
             setEditedItems(prev => {
                 const newState = { ...prev };
-                delete newState[itemId];
+                delete newState[itemId]; // Para de rastrear
                 return newState;
             });
-            return { ...originalItem, isEditing: false } as CardapioItem;
+            // Retorna o item com os dados originais guardados
+            return { ...(originalItemData || item), isEditing: false } as CardapioItem; 
           }
         }
         return item;
@@ -226,25 +239,32 @@ const CardapioPage: React.FC = () => {
   // Handler para mudanças nos inputs de edição
   const handleEditInputChange = (itemId: number, field: keyof CardapioItem, value: any) => {
     const finalValue = field === 'disponivel' ? (value === 'true') : value;
+    // Atualiza apenas a cópia local que está sendo exibida
     setItensCardapio(prevItens =>
       prevItens.map(item =>
         item.id === itemId ? { ...item, [field]: finalValue } : item
       )
     );
+    // Atualiza o objeto de alterações rastreadas (sem modificar o original guardado)
     setEditedItems(prev => ({
         ...prev,
-        [itemId]: { ...prev[itemId], [field]: finalValue }
+        [itemId]: { ...(prev[itemId] || {}), [field]: finalValue }
     }));
   };
 
-  // Calcula quais itens têm alterações pendentes
+  // Calcula quais itens têm alterações pendentes comparando com o estado original guardado
   const itemsComAlteracoes = useMemo(() => {
     return Object.keys(editedItems).filter(idStr => {
         const id = parseInt(idStr, 10);
-        const itemAtual = itensCardapio.find(i => i.id === id);
-        const alteracoes = editedItems[id];
-        if (!itemAtual || !alteracoes) return false;
-        return Object.keys(alteracoes).some(key => alteracoes[key as keyof CardapioItem] !== itemAtual[key as keyof CardapioItem]);
+        const itemAtualEditado = itensCardapio.find(i => i.id === id);
+        const itemOriginal = editedItems[id]; // O estado original guardado
+        if (!itemAtualEditado || !itemOriginal || !itemAtualEditado.isEditing) return false;
+        
+        // Compara o estado atual editado com o original guardado
+        return Object.keys(itemOriginal).some(key => 
+            key !== 'isEditing' && 
+            itemAtualEditado[key as keyof CardapioItem] !== itemOriginal[key as keyof CardapioItem]
+        );
     }).map(idStr => itensCardapio.find(i => i.id === parseInt(idStr, 10))).filter(Boolean) as CardapioItem[];
   }, [itensCardapio, editedItems]);
 
@@ -257,7 +277,7 @@ const CardapioPage: React.FC = () => {
     setSaving(true);
     const updates = itemsComAlteracoes.map(item => {
       const { id, nome_produto, categoria, disponivel, descricao_produto, observacao, promocao } = item;
-      const updateData: Partial<CardapioItem> = {
+      const updateData: Partial<Omit<CardapioItem, 'id' | 'isEditing'>> = {
         nome_produto,
         categoria,
         disponivel,
@@ -276,8 +296,9 @@ const CardapioPage: React.FC = () => {
         alert(`Houve ${errors.length} erro(s) ao salvar. Verifique o console.`);
       } else {
         alert("Todas as alterações foram salvas com sucesso!");
+        // Sai do modo de edição para os itens salvos e limpa o rastreamento
         setItensCardapio(prev => prev.map(item => itemsComAlteracoes.find(i => i.id === item.id) ? {...item, isEditing: false} : item));
-        setEditedItems({});
+        setEditedItems({}); // Limpa todos os itens editados
       }
     } catch (e) {
       console.error("Erro geral ao salvar alterações:", e);
@@ -296,23 +317,28 @@ const CardapioPage: React.FC = () => {
   }
 
   // **CRÍTICO: CORRIGINDO AGRUPAMENTO PARA GARANTIR ORDEM E VISIBILIDADE**
+  // **Refatoração para evitar erro #310: Simplificando useMemo**
   const groupedItens = useMemo(() => {
+    console.log("Recalculando groupedItens..."); // Debug
     const groups: Record<string, CardapioItem[]> = {};
-    // Inicializa todos os grupos na ordem correta
     categoriasOrdem.forEach(cat => { groups[cat] = []; });
-    // Preenche os grupos com os itens existentes
     itensCardapio.forEach(item => {
-      const categoria = item.categoria;
-      if (groups[categoria]) { // Adiciona apenas se a categoria for conhecida
-        groups[categoria].push(item);
-      } else {
-        // Opcional: Agrupar categorias desconhecidas
-        if (!groups["Outros"]) groups["Outros"] = [];
-        groups["Outros"].push(item);
-      }
+      // Garante que a categoria é uma string válida antes de agrupar
+      const categoriaKey = typeof item.categoria === 'string' && categoriasOrdem.includes(item.categoria) 
+                           ? item.categoria 
+                           : "Outros"; // Agrupa categorias inválidas ou desconhecidas
+      if (!groups[categoriaKey]) groups[categoriaKey] = []; // Garante que o grupo exista
+      groups[categoriaKey].push(item);
     });
+    // Adiciona o grupo "Outros" se ele foi criado
+    if (!categoriasOrdem.includes("Outros") && groups["Outros"]?.length > 0) {
+        // Não adiciona à ordem principal, mas o grupo existe
+    } else if (!groups["Outros"]) {
+        delete groups["Outros"]; // Remove se não foi usado
+    }
+    console.log("Grupos calculados:", groups); // Debug
     return groups;
-  }, [itensCardapio]);
+  }, [itensCardapio]); // Dependência mantida
 
   // Renderização principal da página
   return (
@@ -338,7 +364,6 @@ const CardapioPage: React.FC = () => {
       {/* Botão Salvar Alterações - STICKY */}
       {itemsComAlteracoes.length > 0 && (
         <div className="sticky bottom-4 w-full flex justify-center z-40 px-4">
-            {/* **REFORMULAÇÃO: Estilo do botão Salvar Alterações (azul)** */}
             <button
                 onClick={handleSaveAllChanges}
                 disabled={saving}
@@ -352,11 +377,11 @@ const CardapioPage: React.FC = () => {
 
       {/* **CRÍTICO: RENDERIZAÇÃO DAS CATEGORIAS NA ORDEM CORRETA** */}
       {categoriasOrdem.map(categoria => {
-        const itensDaCategoria = groupedItens[categoria] || [];
-        // **CORREÇÃO: Renderiza a seção mesmo se estiver vazia, para manter a ordem**
-        // if (itensDaCategoria.length === 0) return null; // REMOVIDO - Mostrar todas as categorias
-
+        // **Refatoração para evitar erro #310: Acessa grupo com segurança**
+        const itensDaCategoria = groupedItens[categoria] ?? []; // Usa ?? para garantir array vazio
+        
         return (
+          // **Refatoração para evitar erro #310: Usa categoria como key (estável)**
           <div key={categoria} className="mb-10">
             <h3 className="text-2xl font-semibold text-gray-800 mb-4 pb-2 border-b border-gray-200">{categoria}</h3>
             {itensDaCategoria.length === 0 ? (
@@ -364,8 +389,8 @@ const CardapioPage: React.FC = () => {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {itensDaCategoria.map(item => (
+                  // **Refatoração para evitar erro #310: Usa item.id como key (estável e único)**
                   <div key={item.id} className={`card-base ${item.isEditing ? 'ring-2 ring-blue-400 ring-offset-1' : ''}`}>
-                    {/* **REFORMULAÇÃO: Layout do Card (Visual e Edição)** */}
                     {!item.isEditing ? (
                       // MODO VISUALIZAÇÃO
                       <div className="flex flex-col h-full">
@@ -375,13 +400,10 @@ const CardapioPage: React.FC = () => {
                             {item.disponivel ? 'Disponível' : 'Indisponível'}
                           </span>
                         </div>
-                        {/* Descrição, Observação, Promoção - Só mostra se tiver conteúdo */}
                         {item.descricao_produto && <p className="text-sm text-gray-600 mb-1 mt-1 break-words"><strong className='text-gray-700'>Descrição:</strong> {item.descricao_produto}</p>}
                         {item.observacao && <p className="text-sm text-gray-600 mb-1 mt-1 break-words"><strong className='text-gray-700'>Observação:</strong> {item.observacao}</p>}
                         {item.promocao && <p className="text-sm text-pink-700 bg-pink-50 p-2 rounded-md mt-2 break-words"><strong className='font-semibold'>Promoção:</strong> {item.promocao}</p>}
-                        {/* Espaçador para empurrar botões para baixo */}
                         <div className="flex-grow"></div> 
-                        {/* Botões de Ação */}
                         <div className="mt-4 pt-3 border-t border-gray-100 flex justify-end space-x-2">
                           <button onClick={() => toggleEditMode(item.id)} className="btn-icon text-blue-600 hover:text-blue-800"><Edit3 size={18} /></button>
                           <button onClick={() => openDeleteConfirmationModal(item)} className="btn-icon text-red-600 hover:text-red-800"><Trash2 size={18} /></button>
@@ -417,14 +439,10 @@ const CardapioPage: React.FC = () => {
                           <label className="label-style">Categoria</label>
                           <select value={item.categoria} onChange={(e) => handleEditInputChange(item.id, 'categoria', e.target.value)} className="input-field">
                             {categoriasOrdem.map(cat => <option key={cat} value={cat}>{cat}</option>)}
-                            {/* Adicionar opção para categoria não listada? */}
                           </select>
                         </div>
-                        {/* Botões Salvar/Cancelar Edição */}
                         <div className="flex justify-end space-x-2 pt-2 border-t border-gray-100">
                           <button onClick={() => toggleEditMode(item.id)} className="btn-secondary text-sm"><XCircle size={16} className='mr-1'/> Cancelar</button>
-                          {/* Botão Salvar Individual (opcional, pode depender do Salvar Todos) */}
-                          {/* <button onClick={() => handleSaveChangesForItem(item.id)} className="btn-primary bg-blue-600 hover:bg-blue-700 text-sm"><Save size={16} className='mr-1'/> Salvar</button> */}
                         </div>
                       </div>
                     )}
@@ -436,15 +454,13 @@ const CardapioPage: React.FC = () => {
         );
       })}
       
-      {/* **REFORMULAÇÃO: Modal Adicionar Item - Estilo "Apple"** */}
+      {/* Modal Adicionar Item - Estilo "Apple" */}
       {isAddModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <form onSubmit={handleAddNewItem} className="bg-white rounded-xl shadow-2xl w-full max-w-lg flex flex-col max-h-[90vh]">
-            {/* Cabeçalho */}
             <div className="p-6 border-b border-gray-200">
               <h3 className="text-xl font-semibold text-gray-800">Adicionar Novo Item ao Cardápio</h3>
             </div>
-            {/* Conteúdo Rolável */}
             <div className="p-6 overflow-y-auto flex-grow space-y-4">
               <div>
                 <label htmlFor="add-nome_produto" className="label-style">Nome do Produto <span className="text-red-500">*</span></label>
@@ -476,7 +492,6 @@ const CardapioPage: React.FC = () => {
                 <textarea id="add-promocao" name="promocao" value={novoItem.promocao || ''} onChange={handleNovoItemInputChange} className="input-field" rows={3}></textarea>
               </div>
             </div>
-            {/* Rodapé Fixo */}
             <div className="p-4 bg-gray-50 border-t border-gray-200 flex justify-end space-x-3 rounded-b-xl">
               <button type="button" onClick={() => setIsAddModalOpen(false)} disabled={saving} className="btn-secondary">
                 <XCircle size={18} className="inline mr-1"/> Cancelar
@@ -490,7 +505,7 @@ const CardapioPage: React.FC = () => {
         </div>
       )}
 
-      {/* Modal de Confirmação de Exclusão - Estilo mantido */}
+      {/* Modal de Confirmação de Exclusão */}
       {isConfirmDeleteModalOpen && itemToDelete && (
          <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
            <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md">
@@ -519,15 +534,4 @@ const CardapioPage: React.FC = () => {
 };
 
 export default CardapioPage;
-
-// **Lembrete: Definir estilos globais em App.css**
-/*
-.card-base { @apply border border-gray-200 p-5 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 bg-white flex flex-col min-h-[250px]; }
-.label-style { @apply block text-sm font-medium text-gray-700 mb-1; }
-.input-field { @apply w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-300 focus:border-pink-400 text-sm transition-all duration-150 bg-white; }
-.btn-icon { @apply p-1 rounded-md hover:bg-gray-100 transition-colors duration-150 focus:outline-none focus:ring-1 focus:ring-gray-300; }
-.btn-primary { @apply px-4 py-2 bg-pink-600 hover:bg-pink-700 text-white rounded-lg shadow-md text-sm font-medium transition-all duration-150 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-pink-400 focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed; }
-.btn-secondary { @apply px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg shadow-sm text-sm font-medium transition-all duration-150 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed; }
-.btn-danger { @apply px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg shadow-md text-sm font-medium transition-all duration-150 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-red-400 focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed; }
-*/
 

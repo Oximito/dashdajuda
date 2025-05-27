@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '../supabaseClient';
-import { PlusCircle, Save, XCircle, Trash2, Edit3, AlertTriangle, Loader2 } from 'lucide-react';
+// Restaurando ícones corretos e removendo não utilizados
+import { PlusCircle, Save, XCircle, Trash2, Edit3, AlertTriangle, Loader2 } from 'lucide-react'; 
 import type { RealtimeChannel, RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 
-// Interface para o item do cardápio
+// Interface para o item do cardápio - Mantida
 export interface CardapioItem {
   id: number;
   categoria: string;
@@ -11,23 +12,17 @@ export interface CardapioItem {
   nome_produto: string;
   descricao_produto?: string | null;
   observacao?: string | null;
-  promocao?: string | null; // Adicionado campo promoção
+  promocao?: string | null;
   isEditing?: boolean;
-  // Campos para guardar o estado original durante a edição
-  originalNome?: string;
-  originalCategoria?: string;
-  originalDisponivel?: boolean;
-  originalDescricao?: string | null;
-  originalObservacao?: string | null;
-  originalPromocao?: string | null; // Adicionado campo promoção original
 }
 
-// Ordem definida das categorias
+// **URGENTE: CORRIGINDO A ORDEM E COMPLETUDE DAS CATEGORIAS**
 const categoriasOrdem = [
   "Marmita do dia",
   "Marmita clássica",
-  "Mix de salada", // Adicionado Mix de salada conforme solicitado
-  "Bebida",
+  "Omelete", // Adicionando Omelete que estava faltando
+  "Mix de salada",
+  "Bebida", // Corrigido para "Bebida" (singular)
   "Adicional",
   "Unidade",
 ];
@@ -51,24 +46,23 @@ const CardapioPage: React.FC = () => {
     disponivel: true,
     descricao_produto: '',
     observacao: '',
-    promocao: '', // Adicionado campo promoção
+    promocao: '',
   });
 
-  // Busca itens do cardápio, com tratamento de erro e ordenação
+  // Busca itens do cardápio, com tratamento de erro e ordenação CORRIGIDA
   const fetchItensCardapio = useCallback(async (source?: string) => {
     console.log(`Buscando itens do cardápio... (Origem: ${source || 'desconhecida'})`);
     setLoading(true);
     const { data, error: fetchError } = await supabase
       .from('Cárdapio') // Nome correto da tabela
       .select('*');
-      // A ordenação será feita no frontend para garantir a ordem personalizada
 
     if (fetchError) {
       console.error('Erro ao buscar itens do cardápio:', fetchError);
       setError(`Falha ao carregar cardápio: ${fetchError.message}`);
-      setItensCardapio([]); // Limpa em caso de erro
+      setItensCardapio([]);
     } else {
-      // Ordena os dados recebidos pela ordem definida em categoriasOrdem
+      // **CORREÇÃO: Ordena os dados recebidos pela ordem definida em categoriasOrdem**
       const dadosOrdenados = (data as CardapioItem[]).sort((a, b) => {
         const indexA = categoriasOrdem.indexOf(a.categoria);
         const indexB = categoriasOrdem.indexOf(b.categoria);
@@ -174,7 +168,7 @@ const CardapioPage: React.FC = () => {
         disponivel: novoItem.disponivel,
         descricao_produto: novoItem.descricao_produto || null,
         observacao: novoItem.observacao || null,
-        promocao: novoItem.promocao || null, // Adicionado campo promoção
+        promocao: novoItem.promocao || null,
     };
     const { error: insertError } = await supabase
       .from('Cárdapio')
@@ -195,8 +189,7 @@ const CardapioPage: React.FC = () => {
         observacao: '',
         promocao: '',
       });
-      // O Realtime deve atualizar a lista, mas podemos forçar se necessário
-      // fetchItensCardapio('after add');
+      // O Realtime deve atualizar a lista
     }
   };
 
@@ -223,7 +216,6 @@ const CardapioPage: React.FC = () => {
       setIsConfirmDeleteModalOpen(false);
       setItemToDelete(null);
       // O Realtime deve atualizar a lista
-      // fetchItensCardapio('after delete');
     }
   };
 
@@ -260,15 +252,18 @@ const CardapioPage: React.FC = () => {
 
   // Handler para mudanças nos inputs de edição
   const handleEditInputChange = (itemId: number, field: keyof CardapioItem, value: any) => {
+    // Tratamento especial para 'disponivel' que vem do select como string
+    const finalValue = field === 'disponivel' ? (value === 'true') : value;
+    
     setItensCardapio(prevItens =>
       prevItens.map(item =>
-        item.id === itemId ? { ...item, [field]: value } : item
+        item.id === itemId ? { ...item, [field]: finalValue } : item
       )
     );
     // Atualiza o estado de itens editados
     setEditedItems(prev => ({
         ...prev,
-        [itemId]: { ...prev[itemId], [field]: value }
+        [itemId]: { ...prev[itemId], [field]: finalValue }
     }));
   };
 
@@ -359,20 +354,20 @@ const CardapioPage: React.FC = () => {
       {/* Cabeçalho com botão Adicionar */}
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-3xl font-semibold text-gray-700">Itens do Cardápio</h2>
+        {/* **CORREÇÃO: Estilo do botão Adicionar restaurado** */}
         <button
           onClick={() => setIsAddModalOpen(true)}
-          className="bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md flex items-center transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-green-400 focus:ring-opacity-70"
+          className="bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md flex items-center transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-pink-400 focus:ring-opacity-70"
         >
           <PlusCircle size={20} className="mr-2" />
           Adicionar Novo Item
         </button>
       </div>
 
-      {/* Botão Salvar Alterações - AGORA STICKY */}
+      {/* Botão Salvar Alterações - STICKY e com estilo restaurado */}
       {itemsComAlteracoes.length > 0 && (
-        // Usa 'sticky' e 'bottom-4' para fixar perto do final da viewport ao rolar
-        // 'z-40' para garantir que fique acima dos cards
         <div className="sticky bottom-4 w-full flex justify-center z-40 px-4">
+            {/* **CORREÇÃO: Estilo do botão Salvar restaurado (semelhante ao Adicionar)** */}
             <button
                 onClick={handleSaveAllChanges}
                 disabled={saving}
@@ -384,46 +379,45 @@ const CardapioPage: React.FC = () => {
         </div>
       )}
 
-      {/* Modal Adicionar Item - Com footer fixo */}
+      {/* Modal Adicionar Item - Com footer fixo e estilo ajustado */}
       {isAddModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-          {/* Estrutura flex column para footer fixo */}
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg flex flex-col max-h-[90vh]">
-            {/* Cabeçalho Fixo */}
+            {/* Cabeçalho */}
             <div className="p-6 border-b border-gray-200">
-                <h3 className="text-2xl font-semibold text-gray-800">Adicionar Novo Item</h3>
+              <h3 className="text-xl font-semibold text-gray-800">Adicionar Novo Item ao Cardápio</h3>
             </div>
             {/* Conteúdo Rolável */}
-            <form onSubmit={handleAddNewItem} className="overflow-y-auto flex-grow p-6">
-              {/* Campos do formulário... */}
+            <form onSubmit={handleAddNewItem} className="p-6 overflow-y-auto flex-grow">
+              {/* Campos do formulário - Usando classes consistentes */}
               <div className="mb-4">
-                <label htmlFor="nome_produto_novo" className="block text-sm font-medium text-gray-700 mb-1">Nome do Produto</label>
-                <input type="text" name="nome_produto" id="nome_produto_novo" value={novoItem.nome_produto || ''} onChange={handleNovoItemInputChange} required className="input-field" />
+                <label htmlFor="add-nome_produto" className="label-style">Nome do Produto <span className="text-red-500">*</span></label>
+                <input type="text" id="add-nome_produto" name="nome_produto" value={novoItem.nome_produto} onChange={handleNovoItemInputChange} className="input-field" required />
               </div>
               <div className="mb-4">
-                <label htmlFor="categoria_novo" className="block text-sm font-medium text-gray-700 mb-1">Categoria</label>
-                <select name="categoria" id="categoria_novo" value={novoItem.categoria} onChange={handleNovoItemInputChange} required className="input-field">
-                  {categoriasOrdem.map(cat => (<option key={cat} value={cat}>{cat}</option>))}
+                <label htmlFor="add-categoria" className="label-style">Categoria <span className="text-red-500">*</span></label>
+                <select id="add-categoria" name="categoria" value={novoItem.categoria} onChange={handleNovoItemInputChange} className="input-field" required>
+                  {categoriasOrdem.map(cat => <option key={cat} value={cat}>{cat}</option>)}
                 </select>
               </div>
               <div className="mb-4">
-                <label htmlFor="disponivel_novo" className="block text-sm font-medium text-gray-700 mb-1">Disponível</label>
-                <select name="disponivel" id="disponivel_novo" value={novoItem.disponivel ? 'true' : 'false'} onChange={handleNovoItemDisponivelChange} required className="input-field">
+                <label htmlFor="add-disponivel" className="label-style">Disponível?</label>
+                <select id="add-disponivel" name="disponivel" value={novoItem.disponivel ? 'true' : 'false'} onChange={handleNovoItemDisponivelChange} className="input-field">
                   <option value="true">Sim</option>
                   <option value="false">Não</option>
                 </select>
               </div>
               <div className="mb-4">
-                <label htmlFor="descricao_produto_novo" className="block text-sm font-medium text-gray-700 mb-1">Descrição</label>
-                <textarea name="descricao_produto" id="descricao_produto_novo" value={novoItem.descricao_produto || ''} onChange={handleNovoItemInputChange} rows={3} className="input-field" />
+                <label htmlFor="add-descricao_produto" className="label-style">Descrição</label>
+                <textarea id="add-descricao_produto" name="descricao_produto" value={novoItem.descricao_produto || ''} onChange={handleNovoItemInputChange} rows={3} className="input-field"></textarea>
               </div>
               <div className="mb-4">
-                <label htmlFor="observacao_novo" className="block text-sm font-medium text-gray-700 mb-1">Observação</label>
-                <textarea name="observacao" id="observacao_novo" value={novoItem.observacao || ''} onChange={handleNovoItemInputChange} rows={2} className="input-field" />
+                <label htmlFor="add-observacao" className="label-style">Observação</label>
+                <textarea id="add-observacao" name="observacao" value={novoItem.observacao || ''} onChange={handleNovoItemInputChange} rows={2} className="input-field"></textarea>
               </div>
               <div className="mb-4">
-                <label htmlFor="promocao_novo" className="block text-sm font-medium text-gray-700 mb-1">Promoção</label>
-                <textarea name="promocao" id="promocao_novo" value={novoItem.promocao || ''} onChange={handleNovoItemInputChange} rows={2} className="input-field" />
+                <label htmlFor="add-promocao" className="label-style">Promoção</label>
+                <textarea id="add-promocao" name="promocao" value={novoItem.promocao || ''} onChange={handleNovoItemInputChange} rows={2} className="input-field"></textarea>
               </div>
             </form>
             {/* Rodapé Fixo */}
@@ -431,20 +425,19 @@ const CardapioPage: React.FC = () => {
               <button type="button" onClick={() => setIsAddModalOpen(false)} disabled={saving} className="btn-secondary">
                 <XCircle size={18} className="inline mr-1"/> Cancelar
               </button>
-              <button type="submit" form="add-item-form" disabled={saving} className="btn-primary bg-green-500 hover:bg-green-600">
+              {/* **CORREÇÃO: Estilo do botão Salvar no modal** */}
+              <button type="submit" form="add-item-form" disabled={saving} className="btn-primary bg-green-600 hover:bg-green-700">
                 {saving ? <Loader2 size={18} className="inline mr-1 animate-spin"/> : <Save size={18} className="inline mr-1"/>}
-                {saving ? 'Salvando...' : 'Salvar Novo Item'}
+                {saving ? 'Salvando...' : 'Adicionar Item'}
               </button>
             </div>
-            {/* Adiciona um ID ao form para o botão submit externo funcionar */}
-            <form id="add-item-form" onSubmit={handleAddNewItem} className="hidden"></form>
           </div>
         </div>
       )}
 
-      {/* Modal Confirmar Remoção */}
+      {/* Modal de Confirmação de Exclusão - Estilo mantido */}
       {isConfirmDeleteModalOpen && itemToDelete && (
-         <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+        <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md">
             <div className="text-center">
                 <AlertTriangle size={48} className="text-red-500 mx-auto mb-4" />
@@ -467,151 +460,130 @@ const CardapioPage: React.FC = () => {
         </div>
       )}
 
-      {/* Mensagem de cardápio vazio */}
-      {itensCardapio.length === 0 && !loading && !error && (
-        <div className="text-center text-gray-500 mt-12">
-          <p className="text-2xl mb-2">Nenhum item no cardápio ainda.</p>
-          <p className="text-lg">Clique em "Adicionar Novo Item" para começar.</p>
-        </div>
-      )}
-      
       {/* Renderização das categorias e itens */}
       {categoriasOrdem.map(categoria => (
-        groupedItens[categoria] && groupedItens[categoria].length > 0 && (
-          <div key={categoria} className="mb-10">
-            <h3 className="text-2xl font-semibold text-gray-800 mb-5 border-b pb-2 border-gray-200">{categoria}</h3>
+        // Renderiza a seção apenas se houver itens ou se for a categoria "Sem Categoria" com itens
+        (groupedItens[categoria] && groupedItens[categoria].length > 0) || (categoria === "Sem Categoria" && groupedItens[categoria]?.length > 0) ? (
+          <div key={categoria} className="mb-8">
+            <h3 className="text-2xl font-semibold text-gray-800 mb-4 pb-2 border-b-2 border-pink-200">{categoria}</h3>
+            {/* **CORREÇÃO: Grid responsivo para os cards** */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {groupedItens[categoria].map(item => (
-                <div key={item.id} className={`bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden transition-all duration-200 ${item.isEditing ? 'ring-2 ring-blue-400 shadow-lg' : 'hover:shadow-lg'}`}>
-                  <div className="p-5">
-                    {/* Nome do Produto - Centralizado e sem truncar */}
-                    <h4 className={`text-lg font-semibold mb-2 text-center ${item.isEditing ? 'text-blue-700' : 'text-gray-800'} whitespace-normal break-words`}>
-                      {item.isEditing ? (
-                        <input 
-                          type="text" 
-                          value={item.nome_produto}
-                          onChange={(e) => handleEditInputChange(item.id, 'nome_produto', e.target.value)}
-                          className="input-edit text-center"
-                        />
-                      ) : (
-                        item.nome_produto
-                      )}
-                    </h4>
-                    {/* Disponibilidade */}
-                    <div className="text-center mb-3">
-                      {item.isEditing ? (
-                        <select 
-                          value={item.disponivel ? 'true' : 'false'}
-                          onChange={(e) => handleEditInputChange(item.id, 'disponivel', e.target.value === 'true')}
-                          className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium border ${item.disponivel ? 'bg-green-100 text-green-800 border-green-200' : 'bg-red-100 text-red-800 border-red-200'}`}
-                        >
-                          <option value="true">Disponível</option>
-                          <option value="false">Indisponível</option>
-                        </select>
-                      ) : (
-                        <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-medium ${item.disponivel ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                // **CORREÇÃO: Estilo do Card restaurado (tema rosa, sombra, espaçamento)**
+                <div key={item.id} className={`bg-white rounded-xl shadow-md hover:shadow-lg transition-shadow duration-300 border border-gray-200 flex flex-col ${item.isEditing ? 'ring-2 ring-pink-400 ring-offset-2' : ''}`}>
+                  {/* Conteúdo Principal (Não Editável) */}
+                  {!item.isEditing ? (
+                    <div className="p-5 flex flex-col flex-grow">
+                      <div className="flex justify-between items-start mb-2">
+                        {/* **CORREÇÃO: Nome do produto visível, sem corte** */}
+                        <h4 className="text-lg font-semibold text-gray-900 break-words flex-grow mr-2">{item.nome_produto}</h4>
+                        {/* **CORREÇÃO: Estilo do botão Disponível/Indisponível** */}
+                        <span className={`px-3 py-0.5 rounded-full text-xs font-medium flex-shrink-0 ${item.disponivel ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
                           {item.disponivel ? 'Disponível' : 'Indisponível'}
                         </span>
+                      </div>
+                      {/* **CORREÇÃO: Descrição visível, sem corte, e só aparece se existir** */}
+                      {item.descricao_produto && (
+                        <p className="text-sm text-gray-600 mt-1 mb-3 break-words whitespace-pre-wrap"><strong>Descrição:</strong> {item.descricao_produto}</p>
                       )}
+                      {/* **CORREÇÃO: Observação visível, sem corte, e só aparece se existir** */}
+                      {item.observacao && (
+                        <p className="text-sm text-gray-500 mt-1 mb-3 break-words whitespace-pre-wrap"><strong>Observação:</strong> {item.observacao}</p>
+                      )}
+                      {/* **CORREÇÃO: Promoção visível, sem corte, e só aparece se existir** */}
+                      {item.promocao && (
+                        <div className="bg-pink-50 border border-pink-200 rounded-md p-2 mt-1 mb-3">
+                          <p className="text-sm text-pink-700 break-words whitespace-pre-wrap"><strong>Promoção:</strong> {item.promocao}</p>
+                        </div>
+                      )}
+                      {/* **CORREÇÃO: Remove espaço extra se não houver descrição/obs/promoção** */}
+                      {!item.descricao_produto && !item.observacao && !item.promocao && <div className="flex-grow"></div>} 
+                      {/* Rodapé com botões de ação */}
+                      <div className="mt-auto pt-3 border-t border-gray-100 flex justify-end space-x-2">
+                        {/* **CORREÇÃO: Estilo dos botões Editar/Excluir restaurado** */}
+                        <button onClick={() => toggleEditMode(item.id)} className="btn-icon text-blue-600 hover:text-blue-800">
+                          <Edit3 size={18} />
+                        </button>
+                        <button onClick={() => openDeleteConfirmationModal(item)} className="btn-icon text-red-600 hover:text-red-800">
+                          <Trash2 size={18} />
+                        </button>
+                      </div>
                     </div>
-                    
-                    {/* Descrição - Justificada e sem truncar */}
-                    {(item.descricao_produto || item.isEditing) && (
+                  ) : (
+                    /* Conteúdo Editável */
+                    <div className="p-5 flex flex-col flex-grow">
                       <div className="mb-3">
-                        <label className="block text-xs font-medium text-gray-500 mb-1">Descrição:</label>
-                        {item.isEditing ? (
-                          <textarea 
-                            value={item.descricao_produto || ''}
-                            onChange={(e) => handleEditInputChange(item.id, 'descricao_produto', e.target.value)}
-                            rows={3}
-                            className="input-edit text-sm"
-                          />
-                        ) : (
-                          <p className="text-sm text-gray-600 text-justify whitespace-normal break-words">
-                            {item.descricao_produto}
-                          </p>
-                        )}
+                        <label htmlFor={`nome-${item.id}`} className="label-style">Nome</label>
+                        <input type="text" id={`nome-${item.id}`} value={item.nome_produto} onChange={(e) => handleEditInputChange(item.id, 'nome_produto', e.target.value)} className="input-field" />
                       </div>
-                    )}
-
-                    {/* Observação - Justificada e sem truncar */}
-                    {(item.observacao || item.isEditing) && (
                       <div className="mb-3">
-                        <label className="block text-xs font-medium text-gray-500 mb-1">Observação:</label>
-                        {item.isEditing ? (
-                          <textarea 
-                            value={item.observacao || ''}
-                            onChange={(e) => handleEditInputChange(item.id, 'observacao', e.target.value)}
-                            rows={2}
-                            className="input-edit text-sm"
-                          />
-                        ) : (
-                          <p className="text-sm text-gray-600 text-justify whitespace-normal break-words">
-                            {item.observacao}
-                          </p>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Promoção - Justificada e sem truncar */}
-                    {(item.promocao || item.isEditing) && (
-                      <div className="mb-3 bg-pink-50 p-2 rounded-md border border-pink-100">
-                        <label className="block text-xs font-medium text-pink-700 mb-1">Promoção:</label>
-                        {item.isEditing ? (
-                          <textarea 
-                            value={item.promocao || ''}
-                            onChange={(e) => handleEditInputChange(item.id, 'promocao', e.target.value)}
-                            rows={2}
-                            className="input-edit text-sm bg-white"
-                          />
-                        ) : (
-                          <p className="text-sm text-pink-800 text-justify whitespace-normal break-words">
-                            {item.promocao}
-                          </p>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Categoria (apenas editável) */}
-                    {item.isEditing && (
-                       <div className="mb-3">
-                        <label className="block text-xs font-medium text-gray-500 mb-1">Categoria:</label>
-                        <select 
-                          value={item.categoria}
-                          onChange={(e) => handleEditInputChange(item.id, 'categoria', e.target.value)}
-                          className="input-edit text-sm"
-                        >
-                          {categoriasOrdem.map(cat => (<option key={cat} value={cat}>{cat}</option>))}
+                        <label htmlFor={`categoria-${item.id}`} className="label-style">Categoria</label>
+                        <select id={`categoria-${item.id}`} value={item.categoria} onChange={(e) => handleEditInputChange(item.id, 'categoria', e.target.value)} className="input-field">
+                          {categoriasOrdem.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                          {/* Adiciona opção para categoria atual se não estiver na lista padrão */}
+                          {!categoriasOrdem.includes(item.categoria) && <option value={item.categoria}>{item.categoria}</option>}
                         </select>
                       </div>
-                    )}
-                  </div>
-                  {/* Botões de Ação */}
-                  <div className="bg-gray-50 px-4 py-3 flex justify-end space-x-2 border-t border-gray-200">
-                    <button 
-                      onClick={() => toggleEditMode(item.id)}
-                      className={`btn-icon ${item.isEditing ? 'btn-secondary' : 'btn-primary-outline'}`}
-                      title={item.isEditing ? "Cancelar Edição" : "Editar Item"}
-                    >
-                      {item.isEditing ? <XCircle size={18} /> : <Edit3 size={18} />}
-                    </button>
-                    <button 
-                      onClick={() => openDeleteConfirmationModal(item)}
-                      className="btn-icon btn-danger-outline"
-                      title="Remover Item"
-                    >
-                      <Trash2 size={18} />
-                    </button>
-                  </div>
+                      <div className="mb-3">
+                        <label htmlFor={`disponivel-${item.id}`} className="label-style">Disponível</label>
+                        <select id={`disponivel-${item.id}`} value={item.disponivel ? 'true' : 'false'} onChange={(e) => handleEditInputChange(item.id, 'disponivel', e.target.value)} className="input-field">
+                          <option value="true">Sim</option>
+                          <option value="false">Não</option>
+                        </select>
+                      </div>
+                      <div className="mb-3">
+                        <label htmlFor={`descricao-${item.id}`} className="label-style">Descrição</label>
+                        <textarea id={`descricao-${item.id}`} value={item.descricao_produto || ''} onChange={(e) => handleEditInputChange(item.id, 'descricao_produto', e.target.value)} rows={3} className="input-field"></textarea>
+                      </div>
+                      <div className="mb-3">
+                        <label htmlFor={`observacao-${item.id}`} className="label-style">Observação</label>
+                        <textarea id={`observacao-${item.id}`} value={item.observacao || ''} onChange={(e) => handleEditInputChange(item.id, 'observacao', e.target.value)} rows={2} className="input-field"></textarea>
+                      </div>
+                      <div className="mb-3">
+                        <label htmlFor={`promocao-${item.id}`} className="label-style">Promoção</label>
+                        <textarea id={`promocao-${item.id}`} value={item.promocao || ''} onChange={(e) => handleEditInputChange(item.id, 'promocao', e.target.value)} rows={2} className="input-field"></textarea>
+                      </div>
+                      {/* Rodapé com botões de ação (Cancelar/Salvar Individual - Opcional) */}
+                      <div className="mt-auto pt-3 border-t border-gray-100 flex justify-end space-x-2">
+                        {/* **CORREÇÃO: Estilo dos botões Cancelar/Salvar (individual, se necessário)** */}
+                        <button onClick={() => toggleEditMode(item.id)} className="btn-secondary">
+                          <XCircle size={18} className="inline mr-1"/> Cancelar
+                        </button>
+                        {/* O botão Salvar principal (sticky) salva tudo */}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
           </div>
-        )
+        ) : null // Não renderiza a seção se não houver itens nessa categoria
       ))}
     </div>
   );
 };
 
 export default CardapioPage;
+
+// **Estilos reutilizáveis (adicionar ao App.css ou similar)**
+/*
+.label-style {
+  @apply block text-sm font-medium text-gray-700 mb-1;
+}
+.input-field {
+  @apply w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-300 focus:border-pink-400 text-sm transition-all duration-150;
+}
+.btn-primary {
+  @apply px-4 py-2 bg-pink-600 hover:bg-pink-700 text-white rounded-lg shadow-md text-sm font-medium transition-all duration-150 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-pink-400 focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed;
+}
+.btn-secondary {
+  @apply px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg shadow-sm text-sm font-medium transition-all duration-150 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed;
+}
+.btn-danger {
+  @apply px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg shadow-md text-sm font-medium transition-all duration-150 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-red-400 focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed;
+}
+.btn-icon {
+  @apply p-1 rounded-md hover:bg-gray-100 transition-colors duration-150 focus:outline-none focus:ring-1 focus:ring-gray-300;
+}
+*/
 

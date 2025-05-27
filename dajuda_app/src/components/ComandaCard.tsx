@@ -18,7 +18,6 @@ export interface Pedido {
 // Props do componente
 interface ComandaCardProps {
   pedido: Pedido;
-  onUpdate: () => void;
   isNew?: boolean;
   onEdit?: () => void;
   onDelete?: () => void;

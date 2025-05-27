@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '../supabaseClient';
-import { PlusCircle, Save, XCircle, Trash2, Edit3, AlertTriangle, Loader2, CheckCircle } from 'lucide-react'; // Added CheckCircle
+import { PlusCircle, Save, XCircle, Trash2, Edit3, AlertTriangle, Loader2, CheckCircle, Info } from 'lucide-react'; // Added CheckCircle, Info
 import type { RealtimeChannel } from "@supabase/supabase-js";
 
 // Interface para o item do cardápio
@@ -50,23 +50,26 @@ const mapSupabaseItemToState = (item: any): CardapioItem => ({
   promocoes: item?.promocoes || '',
 });
 
-// --- Redesign Styles ---
-const baseInputStyle = "block w-full text-sm rounded-lg border focus:outline-none focus:ring-2 transition duration-150 ease-in-out";
+// --- Redesign Styles v2 ---
+const baseInputStyle = "block w-full text-sm rounded-md border focus:outline-none focus:ring-2 transition duration-150 ease-in-out shadow-sm"; // Slightly softer radius, added shadow
 const inputStyle = `${baseInputStyle} border-gray-300 focus:border-pink-500 focus:ring-pink-300 placeholder-gray-400 px-3 py-2`;
-// const inputErrorStyle = `${baseInputStyle} border-red-500 focus:border-red-600 focus:ring-red-300 px-3 py-2`; // REMOVED - Not used
-const labelStyle = "block text-sm font-medium text-gray-700 mb-1";
-const baseButtonStyle = "inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed";
-// const primaryButtonStyle = `${baseButtonStyle} text-white bg-pink-600 hover:bg-pink-700 focus:ring-pink-500`; // REMOVED - Not used (specific colors applied directly)
+const labelStyle = "block text-sm font-medium text-gray-700 mb-1.5"; // Increased bottom margin
+const baseButtonStyle = "inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 transition duration-150 ease-in-out disabled:opacity-60 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95"; // Softer radius, added transform effects
 const secondaryButtonStyle = `${baseButtonStyle} text-gray-700 bg-white border-gray-300 hover:bg-gray-50 focus:ring-pink-500`;
 const dangerButtonStyle = `${baseButtonStyle} text-white bg-red-600 hover:bg-red-700 focus:ring-red-500`;
 const greenButtonStyle = `${baseButtonStyle} text-white bg-green-600 hover:bg-green-700 focus:ring-green-500`;
 const blueButtonStyle = `${baseButtonStyle} text-white bg-blue-600 hover:bg-blue-700 focus:ring-blue-500`;
-const cardBaseStyle = "bg-white rounded-xl shadow-md overflow-hidden transition-shadow hover:shadow-lg";
+const cardBaseStyle = "bg-white rounded-lg shadow-sm overflow-hidden transition-all duration-200 ease-in-out hover:shadow-md flex flex-col"; // Softer radius, lighter shadow, flex-col for button alignment
 const cardEditingStyle = `${cardBaseStyle} ring-2 ring-pink-400 ring-offset-1`;
 const modalOverlayStyle = "fixed inset-0 bg-gray-900 bg-opacity-60 backdrop-blur-sm flex justify-center items-center z-50 p-4";
-const modalContentStyle = "bg-white p-6 rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto";
-const sectionTitleStyle = "text-xl font-semibold text-gray-800 mb-4 pb-2 border-b border-gray-200";
-// --- End Redesign Styles ---
+const modalContentStyle = "bg-white p-6 rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto"; // Softer radius
+const sectionTitleStyle = "text-xl font-semibold text-gray-800 mb-5 pb-2 border-b border-gray-200"; // Increased bottom margin
+const availabilityBadgeBase = "inline-block px-2.5 py-0.5 rounded-full text-xs font-medium"; // Slightly larger padding
+const availableBadgeStyle = `${availabilityBadgeBase} bg-green-100 text-green-800`;
+const unavailableBadgeStyle = `${availabilityBadgeBase} bg-red-100 text-red-800`;
+const promotionBoxStyle = "mt-3 p-3 bg-pink-50 border border-pink-200 rounded-md text-xs"; // New pink theme
+const saveChangesBannerStyle = "bg-blue-50 border border-blue-200 text-blue-800 px-4 py-3 rounded-lg mb-6 flex flex-col sm:flex-row justify-between items-center gap-4"; // New blue theme, removed fixed/sticky
+// --- End Redesign Styles v2 ---
 
 const CardapioPage: React.FC = () => {
   const [itensCardapio, setItensCardapio] = useState<CardapioItem[]>([]);
@@ -463,11 +466,11 @@ const CardapioPage: React.FC = () => {
         </div>
       )}
 
-      {/* Save Changes Banner */}
+      {/* Save Changes Banner - Now scrolls with page */}
       {editingItemIds.size > 0 && (
-        <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded-lg mb-6 flex flex-col sm:flex-row justify-between items-center gap-4">
+        <div className={saveChangesBannerStyle}>
           <div className="flex items-center">
-             <CheckCircle size={20} className="text-yellow-600 mr-3 flex-shrink-0" />
+             <Info size={20} className="text-blue-600 mr-3 flex-shrink-0" /> {/* Changed icon */}
              <div>
                 <p className="font-semibold">Você tem {editingItemIds.size} item(ns) em edição.</p>
                 <p className="text-sm">Salve as alterações para aplicá-las.</p>
@@ -502,9 +505,45 @@ const CardapioPage: React.FC = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                     {itensDaCategoria.map(item => (
                       <div key={item.id} className={item.isEditing ? cardEditingStyle : cardBaseStyle}>
-                        <div className="p-5">
-                          {item.isEditing ? (
-                            // --- Edit Mode --- 
+                        {/* Card Content - View Mode */}
+                        {!item.isEditing && (
+                          <div className="p-5 flex flex-col flex-grow"> {/* Added flex-grow */}
+                            <div className="flex-grow mb-4"> {/* Content grows */}
+                              <h3 className="text-lg font-semibold text-gray-900 mb-1.5 truncate" title={item.nome_produto}>{item.nome_produto || "(Item sem nome)"}</h3>
+                              <span className={item.disponivel === 'Sim' ? availableBadgeStyle : unavailableBadgeStyle}>
+                                {item.disponivel === 'Sim' ? 'Disponível' : 'Indisponível'}
+                              </span>
+                              {item.descricao_produto && <p className="text-sm text-gray-600 mt-2.5 line-clamp-3">{item.descricao_produto}</p>}
+                              {item.promocoes && (
+                                  <div className={promotionBoxStyle}>
+                                      <p className="font-semibold text-pink-800">Promoção:</p>
+                                      <p className="text-pink-700">{item.promocoes}</p>
+                                  </div>
+                              )}
+                              {item.observacao && <p className="text-xs text-gray-500 mt-2.5 italic">Obs: {item.observacao}</p>}
+                            </div>
+                            {/* Buttons aligned to bottom */}
+                            <div className="mt-auto pt-4 border-t border-gray-100 flex justify-end space-x-2"> {/* Added mt-auto */}
+                              <button
+                                onClick={() => toggleEditMode(item.id)}
+                                className={`${secondaryButtonStyle} px-3 py-1.5`}
+                                title="Editar Item"
+                              >
+                                <Edit3 size={16} />
+                              </button>
+                              <button
+                                onClick={() => openDeleteConfirmationModal(item)}
+                                className={`${dangerButtonStyle} px-3 py-1.5`}
+                                title="Excluir Item"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                        {/* Card Content - Edit Mode */}
+                        {item.isEditing && (
+                          <div className="p-5">
                             <div className="space-y-4">
                               <div>
                                 <label htmlFor={`nome-${item.id}`} className={labelStyle}>Nome*</label>
@@ -583,42 +622,8 @@ const CardapioPage: React.FC = () => {
                                 {/* Salvar individual removido - usar Salvar Alterações geral */}
                               </div>
                             </div>
-                          ) : (
-                            // --- View Mode --- 
-                            <div className="flex flex-col h-full">
-                              <div className="flex-grow mb-4">
-                                <h3 className="text-lg font-semibold text-gray-900 mb-1 truncate" title={item.nome_produto}>{item.nome_produto || "(Item sem nome)"}</h3>
-                                <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${item.disponivel === 'Sim' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                                  {item.disponivel === 'Sim' ? 'Disponível' : 'Indisponível'}
-                                </span>
-                                {item.descricao_produto && <p className="text-sm text-gray-600 mt-2 line-clamp-3">{item.descricao_produto}</p>}
-                                {item.promocoes && (
-                                    <div className="mt-3 p-2 bg-yellow-50 border border-yellow-200 rounded-md">
-                                        <p className="text-xs font-semibold text-yellow-800">Promoção:</p>
-                                        <p className="text-xs text-yellow-700">{item.promocoes}</p>
-                                    </div>
-                                )}
-                                {item.observacao && <p className="text-xs text-gray-500 mt-2 italic">Obs: {item.observacao}</p>}
-                              </div>
-                              <div className="mt-auto pt-4 border-t border-gray-100 flex justify-end space-x-2">
-                                <button
-                                  onClick={() => toggleEditMode(item.id)}
-                                  className={`${secondaryButtonStyle} px-3 py-1.5`}
-                                  title="Editar Item"
-                                >
-                                  <Edit3 size={16} />
-                                </button>
-                                <button
-                                  onClick={() => openDeleteConfirmationModal(item)}
-                                  className={`${dangerButtonStyle} px-3 py-1.5`}
-                                  title="Excluir Item"
-                                >
-                                  <Trash2 size={16} />
-                                </button>
-                              </div>
-                            </div>
-                          )}
-                        </div>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -634,29 +639,35 @@ const CardapioPage: React.FC = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                       {itensAgrupados["Sem Categoria"].map(item => (
                           <div key={item.id} className={item.isEditing ? cardEditingStyle : cardBaseStyle}>
-                              <div className="p-5">
-                                  {/* Repete a lógica de renderização do item */} 
-                                  {item.isEditing ? (
-                                      <div className="space-y-4">
-                                          {/* Campos de edição aqui... */}
-                                          <p>Editando item sem categoria ID: {item.id}</p>
-                                          <div className="flex justify-end space-x-2 pt-2">
-                                              <button onClick={() => toggleEditMode(item.id)} className={secondaryButtonStyle}><XCircle size={16} className="mr-1" /> Cancelar</button>
-                                          </div>
-                                      </div>
-                                  ) : (
-                                      <div className="flex flex-col h-full">
-                                          <div className="flex-grow mb-4">
-                                              <h3 className="text-lg font-semibold text-gray-900 mb-1 truncate" title={item.nome_produto}>{item.nome_produto || "(Item sem nome)"}</h3>
-                                              {/* Outros detalhes... */}
-                                          </div>
-                                          <div className="mt-auto pt-4 border-t border-gray-100 flex justify-end space-x-2">
-                                              <button onClick={() => toggleEditMode(item.id)} className={`${secondaryButtonStyle} px-3 py-1.5`} title="Editar Item"><Edit3 size={16} /></button>
-                                              <button onClick={() => openDeleteConfirmationModal(item)} className={`${dangerButtonStyle} px-3 py-1.5`} title="Excluir Item"><Trash2 size={16} /></button>
-                                          </div>
-                                      </div>
-                                  )}
+                             {/* Repete a lógica de renderização do item - View Mode */}
+                            {!item.isEditing && (
+                              <div className="p-5 flex flex-col flex-grow"> {/* Added flex-grow */}
+                                <div className="flex-grow mb-4"> {/* Content grows */}
+                                  <h3 className="text-lg font-semibold text-gray-900 mb-1.5 truncate" title={item.nome_produto}>{item.nome_produto || "(Item sem nome)"}</h3>
+                                  <span className={item.disponivel === 'Sim' ? availableBadgeStyle : unavailableBadgeStyle}>
+                                    {item.disponivel === 'Sim' ? 'Disponível' : 'Indisponível'}
+                                  </span>
+                                  {/* Outros detalhes... */}
+                                </div>
+                                {/* Buttons aligned to bottom */}
+                                <div className="mt-auto pt-4 border-t border-gray-100 flex justify-end space-x-2"> {/* Added mt-auto */}
+                                  <button onClick={() => toggleEditMode(item.id)} className={`${secondaryButtonStyle} px-3 py-1.5`} title="Editar Item"><Edit3 size={16} /></button>
+                                  <button onClick={() => openDeleteConfirmationModal(item)} className={`${dangerButtonStyle} px-3 py-1.5`} title="Excluir Item"><Trash2 size={16} /></button>
+                                </div>
                               </div>
+                            )}
+                            {/* Repete a lógica de renderização do item - Edit Mode */}
+                            {item.isEditing && (
+                              <div className="p-5">
+                                <div className="space-y-4">
+                                  {/* Campos de edição aqui... */}
+                                  <p>Editando item sem categoria ID: {item.id}</p>
+                                  <div className="flex justify-end space-x-2 pt-2">
+                                    <button onClick={() => toggleEditMode(item.id)} className={secondaryButtonStyle}><XCircle size={16} className="mr-1" /> Cancelar</button>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
                           </div>
                       ))}
                   </div>

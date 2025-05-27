@@ -1,15 +1,27 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import "./App.css";
 import { supabase } from "./supabaseClient";
-import ComandaCard, { Pedido } from "./components/ComandaCard";
+import ComandaCard, { Pedido, StatusPedido, StatusPagamento } from "./components/ComandaCard"; // Importar tipos StatusPedido e StatusPagamento
 import CardapioPage from "./components/CardapioPage";
 import type { RealtimeChannel, RealtimePostgresChangesPayload } from "@supabase/supabase-js";
-// Importando ícones necessários, incluindo para modais
-import { AlertTriangle, Loader2, X, Save, Trash2, XCircle, Edit3 } from "lucide-react";
+// Importando ícones necessários - REMOVIDO X e Edit3 não utilizados
+import { AlertTriangle, Loader2, Save, Trash2, XCircle } from "lucide-react";
 
 const notificationSound = "/assets/sounds/notify.mp3";
 
 type View = "comandas" | "cardapio";
+
+// Função auxiliar para garantir que o objeto está em conformidade com a interface Pedido
+const ensurePedidoType = (data: any): Pedido => {
+  return {
+    comanda: data.comanda || ".", // Default seguro
+    telefone_key: data.telefone_key || "", // Default seguro
+    nome_cliente: data.nome_cliente || "", // Default seguro
+    status_pedido: data.status_pedido || "Aguardando", // Default seguro
+    pagamento: data.pagamento || "Aguardando pagamento", // Default seguro
+    hora_criacao_pedido: data.hora_criacao_pedido || new Date().toISOString(), // Default seguro
+  };
+};
 
 function App() {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
@@ -34,8 +46,8 @@ function App() {
   const [saving, setSaving] = useState<boolean>(false); // Para feedback de loading nos modais
 
   // Opções para selects nos modais (poderiam vir do DB se necessário)
-  const statusOptions: string[] = ["Aguardando", "Em preparo", "Pronto", "Enviado", "Entregue"];
-  const pagamentoOptions: string[] = ["Aguardando pagamento", "Pago"];
+  const statusOptions: StatusPedido[] = ["Aguardando", "Em preparo", "Pronto", "Enviado", "Entregue"];
+  const pagamentoOptions: StatusPagamento[] = ["Aguardando pagamento", "Pago"];
 
   const playNotificationSound = () => {
     if (audioPlayer.current) {
@@ -56,7 +68,8 @@ function App() {
       setError(`Falha ao carregar pedidos: ${fetchError.message}`);
       setPedidos([]); // Limpa pedidos em caso de erro
     } else {
-      const fetchedPedidos = data as Pedido[];
+      // Garante a tipagem correta ao buscar
+      const fetchedPedidos = (data || []).map(ensurePedidoType);
       console.log("Pedidos buscados:", fetchedPedidos);
       setPedidos(fetchedPedidos);
       // Limpa o erro *apenas* se a busca for bem-sucedida
@@ -114,6 +127,7 @@ function App() {
       // Lógica otimizada para atualizar o estado baseado no evento
       if (payload.eventType === "INSERT" && payload.new.telefone_key) {
         const newKey = payload.new.telefone_key as string;
+        const novoPedido = ensurePedidoType(payload.new); // Garante a tipagem correta
         setPedidos(prevPedidos => {
             // Verifica se o pedido já existe no estado para evitar duplicação e som repetido
             if (!prevPedidos.find(p => p.telefone_key === newKey)) {
@@ -126,17 +140,18 @@ function App() {
                     return updated;
                   });
                 }, 5000); // Remove destaque após 5 segundos
-                // Adiciona o novo pedido e reordena
-                return [...prevPedidos, payload.new].sort((a, b) => new Date(b.hora_criacao_pedido).getTime() - new Date(a.hora_criacao_pedido).getTime());
+                // Adiciona o novo pedido (já tipado) e reordena
+                return [...prevPedidos, novoPedido].sort((a, b) => new Date(b.hora_criacao_pedido).getTime() - new Date(a.hora_criacao_pedido).getTime());
             } else {
-                // Se já existe (caso raro), apenas atualiza
-                return prevPedidos.map(p => p.telefone_key === newKey ? payload.new : p).sort((a, b) => new Date(b.hora_criacao_pedido).getTime() - new Date(a.hora_criacao_pedido).getTime());
+                // Se já existe (caso raro), apenas atualiza (já tipado)
+                return prevPedidos.map(p => p.telefone_key === newKey ? novoPedido : p).sort((a, b) => new Date(b.hora_criacao_pedido).getTime() - new Date(a.hora_criacao_pedido).getTime());
             }
         });
       } else if (payload.eventType === "UPDATE") {
           const updatedKey = payload.new.telefone_key as string;
-          // Atualiza o pedido existente e reordena
-          setPedidos(prevPedidos => prevPedidos.map(p => p.telefone_key === updatedKey ? payload.new : p).sort((a, b) => new Date(b.hora_criacao_pedido).getTime() - new Date(a.hora_criacao_pedido).getTime()));
+          const pedidoAtualizado = ensurePedidoType(payload.new); // Garante a tipagem correta
+          // Atualiza o pedido existente (já tipado) e reordena
+          setPedidos(prevPedidos => prevPedidos.map(p => p.telefone_key === updatedKey ? pedidoAtualizado : p).sort((a, b) => new Date(b.hora_criacao_pedido).getTime() - new Date(a.hora_criacao_pedido).getTime()));
       } else if (payload.eventType === "DELETE") {
           const deletedKey = payload.old.telefone_key as string;
           // Remove o pedido do estado
@@ -313,7 +328,7 @@ function App() {
     }
   };
 
-  // Renderização principal - CORRIGINDO ERROS DE SINTAXE JSX
+  // Renderização principal - CORRIGIDO ERROS DE SINTAXE JSX e TIPAGEM
   return (
     <div className="p-4 sm:p-6 bg-gray-50 min-h-screen font-sans">
       {/* Cabeçalho */}

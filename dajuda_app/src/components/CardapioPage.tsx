@@ -1,31 +1,50 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '../supabaseClient';
 import { PlusCircle, Save, XCircle, Trash2, Edit3, AlertTriangle, Loader2 } from 'lucide-react';
-import type { RealtimeChannel, RealtimePostgresChangesPayload } from "@supabase/supabase-js";
+import type { RealtimeChannel, RealtimePostgresChangesPayload, RealtimeChannelSendResponse } from "@supabase/supabase-js";
 
+// Interface para o item do cardápio
 export interface CardapioItem {
   id: number;
-  categoria: string;         // Será sempre string na UI
+  categoria: string;
   disponivel: "Sim" | "Não";
-  nome_produto: string;      // Será sempre string na UI
-  descricao_produto: string; // Será sempre string na UI
-  observacao: string;        // Será sempre string na UI
+  nome_produto: string;
+  descricao_produto: string;
+  observacao: string;
+  promocoes?: string;
   isEditing?: boolean;
   originalNome?: string;
   originalCategoria?: string;
   originalDisponivel?: "Sim" | "Não";
   originalDescricao?: string;
   originalObservacao?: string;
+  originalPromocoes?: string;
 }
 
+// Lista fixa de categorias
 const categoriasDefinidas = [
   "Marmita do Dia",
-  "Marmita Clássica", "Omeletes",
+  "Marmita Clássica",
   "Mix de Salada",
   "Bebida",
   "Adicional",
   "Unidade",
 ];
+
+const MAX_RETRIES = 5;
+const INITIAL_RETRY_DELAY = 5000; // 5 segundos
+
+// Função auxiliar para mapear dados do Supabase para o formato do estado
+const mapSupabaseItemToState = (item: any): CardapioItem => ({
+  ...item,
+  id: item.id || 0,
+  nome_produto: item.nome_produto || '',
+  categoria: item.categoria || '',
+  disponivel: item.disponivel === 'Sim' || item.disponivel === true ? 'Sim' : 'Não',
+  descricao_produto: item.descricao_produto || '',
+  observacao: item.observacao || '',
+  promocoes: item.promocoes || '',
+});
 
 const CardapioPage: React.FC = () => {
   const [itensCardapio, setItensCardapio] = useState<CardapioItem[]>([]);
@@ -36,80 +55,161 @@ const CardapioPage: React.FC = () => {
   const [itemToDelete, setItemToDelete] = useState<CardapioItem | null>(null);
   const [saving, setSaving] = useState<boolean>(false);
   const cardapioChannelRef = useRef<RealtimeChannel | null>(null);
+  const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const retryCountRef = useRef<number>(0);
 
-  const [novoItem, setNovoItem] = useState<Omit<CardapioItem, 'id' | 'isEditing' | 'originalNome' | 'originalCategoria' | 'originalDisponivel' | 'originalDescricao' | 'originalObservacao'>>({
+  // Estado inicial para o formulário de novo item
+  const [novoItem, setNovoItem] = useState<Omit<CardapioItem, 'id' | 'isEditing' | 'originalNome' | 'originalCategoria' | 'originalDisponivel' | 'originalDescricao' | 'originalObservacao' | 'originalPromocoes'>>({
     nome_produto: '',
     categoria: categoriasDefinidas[0],
     disponivel: "Sim",
     descricao_produto: '',
     observacao: '',
+    promocoes: '',
   });
 
+  // Função para buscar itens do cardápio (usada apenas na carga inicial)
   const fetchItensCardapio = useCallback(async (source?: string) => {
-    console.log(`Buscando itens do cardápio... (Origem: ${source || 'desconhecida'})`);
+    console.log(`[CardapioPage] Buscando itens do cardápio... (Origem: ${source || 'desconhecida'})`);
     setLoading(true);
     const { data, error: fetchError } = await supabase
       .from('Cárdapio')
-      .select('*')
+      .select('*, promocoes')
       .order('nome_produto', { ascending: true });
 
     if (fetchError) {
-      console.error('Erro ao buscar itens do cardápio:', fetchError);
+      console.error('[CardapioPage] Erro ao buscar itens do cardápio:', fetchError);
       setError(`Falha ao carregar cardápio: ${fetchError.message}`);
+      setItensCardapio([]); // Limpa em caso de erro
     } else {
-      const mappedData = data.map(item => ({
-        ...item,
-        id: item.id || 0, // Garante que ID não seja null, embora seja PK
-        nome_produto: item.nome_produto || '', // Trata null para string vazia
-        categoria: item.categoria || '',       // Trata null para string vazia
-        disponivel: item.disponivel === 'Sim' || item.disponivel === true ? 'Sim' : 'Não',
-        descricao_produto: item.descricao_produto || '', // Trata null para string vazia
-        observacao: item.observacao || '',            // Trata null para string vazia
-      })) as CardapioItem[];
+      const mappedData = data.map(mapSupabaseItemToState);
       setItensCardapio(mappedData);
       setError(null);
     }
     setLoading(false);
   }, []);
 
-  useEffect(() => {
-    fetchItensCardapio('initial mount');
+  // Função para configurar e inscrever no canal Realtime
+  const setupRealtimeSubscription = useCallback(() => {
+    if (cardapioChannelRef.current) {
+      supabase.removeChannel(cardapioChannelRef.current).catch(console.error);
+      cardapioChannelRef.current = null;
+    }
+    if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+        retryTimeoutRef.current = null;
+    }
 
-    const handleCardapioChanges = (payload: RealtimePostgresChangesPayload<{[key: string]: any}>) => {
-      console.log("Mudança recebida do Supabase Realtime (Cárdapio)!", payload);
-      fetchItensCardapio('realtime update');
+    console.log("[CardapioPage] Tentando conectar ao canal Realtime...");
+    const channel = supabase.channel('cardapio_realtime_channel');
+
+    // Handler para mudanças recebidas via Realtime
+    const handleRealtimeChange = (payload: RealtimePostgresChangesPayload<{[key: string]: any}>) => {
+        console.log("[CardapioPage] Mudança Realtime recebida:", payload);
+        setItensCardapio(currentItems => {
+            let updatedItems = [...currentItems];
+            const recordId = payload.new?.id || payload.old?.id;
+
+            switch (payload.eventType) {
+                case 'INSERT':
+                    // Adiciona o novo item se ele ainda não existir no estado
+                    if (!updatedItems.some(item => item.id === recordId)) {
+                        updatedItems.push(mapSupabaseItemToState(payload.new));
+                        console.log(`[CardapioPage] Item ${recordId} inserido via Realtime.`);
+                    }
+                    break;
+                case 'UPDATE':
+                    updatedItems = updatedItems.map(item => {
+                        if (item.id === recordId) {
+                            // **Crucial:** Só atualiza se o item NÃO estiver em modo de edição localmente
+                            if (!item.isEditing) {
+                                console.log(`[CardapioPage] Item ${recordId} atualizado via Realtime (não estava em edição).`);
+                                return mapSupabaseItemToState(payload.new);
+                            } else {
+                                console.log(`[CardapioPage] Item ${recordId} ignorado na atualização Realtime (está em edição local).`);
+                                // Opcional: Poderia atualizar os campos 'original*' aqui se quisesse refletir a mudança externa
+                                // return { ...item, originalNome: payload.new.nome_produto || '', ... };
+                                return item; // Mantém o item local com as edições não salvas
+                            }
+                        }
+                        return item;
+                    });
+                    break;
+                case 'DELETE':
+                    const deletedId = payload.old?.id;
+                    if (deletedId) {
+                        updatedItems = updatedItems.filter(item => item.id !== deletedId);
+                        console.log(`[CardapioPage] Item ${deletedId} removido via Realtime.`);
+                    }
+                    break;
+                default:
+                    console.log("[CardapioPage] Evento Realtime não tratado:", payload.eventType);
+            }
+            // Reordena após qualquer mudança para manter a ordem alfabética por nome
+            updatedItems.sort((a, b) => (a.nome_produto || '').localeCompare(b.nome_produto || ''));
+            return updatedItems;
+        });
     };
 
-    cardapioChannelRef.current = supabase
-      .channel('cardapio_realtime_channel')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'Cárdapio' },
-        handleCardapioChanges
-      )
-      .subscribe((status, err) => {
-        if (status === 'SUBSCRIBED') {
-          console.log('Conectado ao canal Realtime do Cardapio!');
-        } else if (status === 'CHANNEL_ERROR') {
-          console.error('Erro no canal Realtime do Cardapio:', err);
-          setError(`Erro de conexão em tempo real (Cárdapio): ${err?.message || 'Erro desconhecido'}`);
-        } else if (status === 'TIMED_OUT') {
-          console.warn('Timeout na conexão Realtime do Cardapio.');
-          setError('Conexão em tempo real (Cárdapio) expirou. As atualizações podem não ser instantâneas.');
-        } else if (status === 'CLOSED'){
-          console.log('Canal Realtime (Cárdapio) fechado.');
+    channel.on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'Cárdapio' },
+      handleRealtimeChange
+    ).subscribe((status: "SUBSCRIBED" | "TIMED_OUT" | "CLOSED" | "CHANNEL_ERROR", err?: Error) => {
+      if (status === 'SUBSCRIBED') {
+        console.log('[CardapioPage] Conectado ao canal Realtime!');
+        setError(null);
+        retryCountRef.current = 0;
+        if (retryTimeoutRef.current) {
+            clearTimeout(retryTimeoutRef.current);
+            retryTimeoutRef.current = null;
         }
-      });
+        // Busca inicial após conectar para garantir sincronia, caso tenha perdido algo
+        fetchItensCardapio('after subscribe');
+      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        console.error(`[CardapioPage] Erro/Status no canal Realtime: ${status}`, err);
+        setError(`Erro de conexão em tempo real (Cardápio): ${status} - ${err?.message || 'Tentando reconectar...'}`);
+        cardapioChannelRef.current = null;
+
+        if (retryCountRef.current < MAX_RETRIES) {
+          const delay = INITIAL_RETRY_DELAY * Math.pow(2, retryCountRef.current);
+          console.log(`[CardapioPage] Tentando reconectar em ${delay / 1000} segundos... (Tentativa ${retryCountRef.current + 1}/${MAX_RETRIES})`);
+          retryTimeoutRef.current = setTimeout(() => {
+            retryCountRef.current++;
+            setupRealtimeSubscription();
+          }, delay);
+        } else {
+          console.error("[CardapioPage] Máximo de tentativas de reconexão atingido.");
+          setError("Falha ao reconectar ao serviço de atualizações em tempo real (Cardápio) após múltiplas tentativas. Atualize manualmente.");
+        }
+      }
+    });
+
+    cardapioChannelRef.current = channel;
+
+  }, [fetchItensCardapio]); // Removido setupRealtimeSubscription da dependência para evitar loop
+
+  // Efeito para buscar dados iniciais e configurar Realtime
+  useEffect(() => {
+    fetchItensCardapio('initial mount');
+    setupRealtimeSubscription();
 
     return () => {
+      console.log("[CardapioPage] Desmontando componente e removendo canal Realtime.");
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+      }
       if (cardapioChannelRef.current) {
         supabase.removeChannel(cardapioChannelRef.current)
-          .then(status => console.log('Canal Realtime (Cárdapio) removido, status:', status))
+          .then(status => console.log('[CardapioPage] Canal Realtime removido no cleanup, status:', status))
           .catch(console.error);
         cardapioChannelRef.current = null;
       }
     };
-  }, [fetchItensCardapio]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchItensCardapio]); // Apenas fetchItensCardapio como dependência inicial
+
+  // --- Funções de manipulação de formulário e ações (adição, exclusão, edição) ---
 
   const handleNovoItemInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -140,6 +240,7 @@ const CardapioPage: React.FC = () => {
         disponivel: novoItem.disponivel,
         descricao_produto: novoItem.descricao_produto.trim() === '' ? null : novoItem.descricao_produto.trim(),
         observacao: novoItem.observacao.trim() === '' ? null : novoItem.observacao.trim(),
+        promocoes: novoItem.promocoes?.trim() === '' ? null : novoItem.promocoes?.trim(),
     };
 
     const { error: insertError } = await supabase
@@ -158,7 +259,9 @@ const CardapioPage: React.FC = () => {
         disponivel: "Sim",
         descricao_produto: '',
         observacao: '',
+        promocoes: '',
       });
+      // A atualização Realtime deve cuidar de adicionar o item à lista
     }
   };
 
@@ -182,14 +285,17 @@ const CardapioPage: React.FC = () => {
       alert(`Item "${itemToDelete.nome_produto}" removido com sucesso!`);
       setIsConfirmDeleteModalOpen(false);
       setItemToDelete(null);
+      // A atualização Realtime deve cuidar de remover o item da lista
     }
   };
 
+  // Função para entrar/sair do modo de edição
   const toggleEditMode = (itemId: number) => {
     setItensCardapio(prevItens =>
       prevItens.map(item => {
         if (item.id === itemId) {
           if (!item.isEditing) {
+            // Entrando no modo de edição: salva o estado original
             return {
               ...item,
               isEditing: true,
@@ -198,24 +304,28 @@ const CardapioPage: React.FC = () => {
               originalDisponivel: item.disponivel,
               originalDescricao: item.descricao_produto,
               originalObservacao: item.observacao,
+              originalPromocoes: item.promocoes,
             };
           } else {
+            // Saindo do modo de edição (cancelando): restaura o estado original
             return {
               ...item,
               isEditing: false,
-              nome_produto: item.originalNome || item.nome_produto,
-              categoria: item.originalCategoria || item.categoria,
-              disponivel: item.originalDisponivel || item.disponivel,
+              nome_produto: item.originalNome !== undefined ? item.originalNome : item.nome_produto,
+              categoria: item.originalCategoria !== undefined ? item.originalCategoria : item.categoria,
+              disponivel: item.originalDisponivel !== undefined ? item.originalDisponivel : item.disponivel,
               descricao_produto: item.originalDescricao !== undefined ? item.originalDescricao : item.descricao_produto,
               observacao: item.originalObservacao !== undefined ? item.originalObservacao : item.observacao,
+              promocoes: item.originalPromocoes !== undefined ? item.originalPromocoes : item.promocoes,
             };
           }
         }
-        return item;
+        return item; // Mantém outros itens como estão
       })
     );
   };
 
+  // Função para lidar com mudanças nos inputs de edição
   const handleEditInputChange = (itemId: number, field: keyof Omit<CardapioItem, 'id'>, value: any) => {
     setItensCardapio(prevItens =>
       prevItens.map(item =>
@@ -224,6 +334,7 @@ const CardapioPage: React.FC = () => {
     );
   };
 
+  // Calcula itens com alterações pendentes
   const itemsComAlteracoes = useMemo(() => {
     return itensCardapio.filter(item =>
       item.isEditing &&
@@ -231,10 +342,12 @@ const CardapioPage: React.FC = () => {
        item.categoria.trim() !== (item.originalCategoria || '').trim() ||
        item.disponivel !== item.originalDisponivel ||
        item.descricao_produto.trim() !== (item.originalDescricao || '').trim() ||
-       item.observacao.trim() !== (item.originalObservacao || '').trim())
+       item.observacao.trim() !== (item.originalObservacao || '').trim() ||
+       (item.promocoes || '').trim() !== (item.originalPromocoes || '').trim())
     );
   }, [itensCardapio]);
 
+  // Salva todas as alterações pendentes
   const handleSaveAllChanges = async () => {
     if (itemsComAlteracoes.length === 0) {
       alert("Nenhuma alteração para salvar.");
@@ -251,13 +364,13 @@ const CardapioPage: React.FC = () => {
 
     if (itensParaSalvar.length === 0) {
         setSaving(false);
-        return; // Não prossegue se todos os itens com alterações são inválidos
+        return;
     }
 
     setSaving(true);
 
     const updates = itensParaSalvar.map(item => {
-      const { id, nome_produto, categoria, disponivel, descricao_produto, observacao } = item;
+      const { id, nome_produto, categoria, disponivel, descricao_produto, observacao, promocoes } = item;
       return supabase
         .from('Cárdapio')
         .update({
@@ -266,6 +379,7 @@ const CardapioPage: React.FC = () => {
             disponivel,
             descricao_produto: descricao_produto.trim() === '' ? null : descricao_produto.trim(),
             observacao: observacao.trim() === '' ? null : observacao.trim(),
+            promocoes: promocoes?.trim() === '' ? null : promocoes?.trim(),
         })
         .match({ id });
     });
@@ -278,15 +392,13 @@ const CardapioPage: React.FC = () => {
         alert(`Houve ${errors.length} erro(s) ao salvar. Verifique o console.`);
       } else {
         alert("Todas as alterações selecionadas foram salvas com sucesso!");
+        // Desativa o modo de edição para os itens salvos e limpa o estado original
         setItensCardapio(prev => prev.map(i => {
             const savedItem = itensParaSalvar.find(altered => altered.id === i.id);
             if (savedItem) {
-                return {...i, isEditing: false, originalNome: undefined, originalCategoria: undefined, originalDisponivel: undefined, originalDescricao: undefined, originalObservacao: undefined };
+                return {...i, isEditing: false, originalNome: undefined, originalCategoria: undefined, originalDisponivel: undefined, originalDescricao: undefined, originalObservacao: undefined, originalPromocoes: undefined };
             }
-            // Se o item estava em edição mas não foi salvo (por ser inválido), reverte ou mantém em edição?
-            // Por ora, apenas desliga o modo de edição para os que foram salvos.
-            // Para os que não foram salvos por validação, eles permanecem em modo de edição.
-            return i.isEditing && !savedItem ? i : {...i, isEditing: false }; 
+            return i;
         }));
       }
     } catch (e) {
@@ -296,17 +408,19 @@ const CardapioPage: React.FC = () => {
     setSaving(false);
   };
 
+  // --- Renderização do componente ---
+
   if (loading && itensCardapio.length === 0) {
-    return <div className="text-center p-10"><p className="text-xl text-gray-600">Carregando cardápio...</p></div>;
+    return <div className="text-center p-10"><Loader2 className="h-12 w-12 text-pink-500 animate-spin mx-auto" /><p className="text-xl text-gray-600 mt-4">Carregando cardápio...</p></div>;
   }
 
-  if (error && itensCardapio.length === 0) {
-    return <div className="text-center p-10"><p className="text-xl text-red-600 bg-red-100 p-4 rounded-lg">{error}</p></div>;
+  if (error && !loading) {
+    return <div className="text-center p-10"><AlertTriangle className="h-12 w-12 text-red-500 mx-auto" /><p className="text-xl text-red-600 bg-red-100 p-4 rounded-lg mt-4">{error}</p></div>;
   }
 
+  // Agrupa itens por categoria para renderização
   const groupedItens = itensCardapio.reduce((acc, item) => {
-    // Itens sem categoria ou com categoria vazia podem ser agrupados em "Sem Categoria" ou filtrados
-    const categoriaKey = item.categoria.trim() || 'Sem Categoria'; 
+    const categoriaKey = item.categoria.trim() || 'Sem Categoria';
     if (!acc[categoriaKey]) {
       acc[categoriaKey] = [];
     }
@@ -318,11 +432,6 @@ const CardapioPage: React.FC = () => {
 
   return (
     <div className="container mx-auto p-4 pb-20">
-      {error && itensCardapio.length > 0 && (
-         <div className="mb-4 p-3 bg-red-100 text-red-700 rounded-md text-center">
-            <AlertTriangle size={20} className="inline mr-2" /> {error}
-         </div>
-      )}
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-3xl font-semibold text-gray-700">Itens do Cardápio</h2>
         <button
@@ -372,6 +481,10 @@ const CardapioPage: React.FC = () => {
               <div className="mb-4">
                 <label htmlFor="descricao_produto_novo" className="block text-sm font-medium text-gray-700 mb-1">Descrição</label>
                 <textarea name="descricao_produto" id="descricao_produto_novo" value={novoItem.descricao_produto} onChange={handleNovoItemInputChange} rows={3} className={formFieldClasses} />
+              </div>
+              <div className="mb-4">
+                <label htmlFor="promocoes_novo" className="block text-sm font-medium text-gray-700 mb-1">Promoções</label>
+                <textarea name="promocoes" id="promocoes_novo" value={novoItem.promocoes} onChange={handleNovoItemInputChange} rows={2} className={formFieldClasses} />
               </div>
               <div className="mb-6">
                 <label htmlFor="observacao_novo" className="block text-sm font-medium text-gray-700 mb-1">Observação</label>
@@ -425,155 +538,116 @@ const CardapioPage: React.FC = () => {
       {categoriasDefinidas.map(categoriaNome => {
         const itensDaCategoria = (groupedItens[categoriaNome] || []).sort((a, b) => (a.nome_produto || '').localeCompare(b.nome_produto || ''));
 
-        // Não renderiza a seção da categoria se não houver itens ou se a categoria for "Sem Categoria" e não houver itens nela
-        if (itensDaCategoria.length === 0 && categoriaNome !== 'Sem Categoria') {
-            // Ou, se quiser mostrar a categoria mesmo vazia:
-            // return (
-            //   <div key={categoriaNome} className="mb-8">
-            //     <h3 className="text-2xl font-semibold text-pink-600 mb-4 border-b-2 border-pink-200 pb-2">{categoriaNome}</h3>
-            //     <p className="text-gray-500 italic">Nenhum item nesta categoria.</p>
-            //   </div>
-            // );
-            return null; 
-        }
-        // Se for "Sem Categoria" e não tiver itens, também não renderiza
-        if (categoriaNome === 'Sem Categoria' && itensDaCategoria.length === 0) {
+        if (itensDaCategoria.length === 0) {
             return null;
         }
 
         return (
           <div key={categoriaNome} className="mb-8">
             <h3 className="text-2xl font-semibold text-pink-600 mb-4 border-b-2 border-pink-200 pb-2">{categoriaNome}</h3>
-            {itensDaCategoria.length > 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {itensDaCategoria.map(item => (
-                  <div key={item.id} className={`p-5 rounded-lg shadow-lg border ${item.isEditing ? 'border-pink-500 ring-2 ring-pink-300 bg-pink-50' : 'border-gray-200 bg-white'} transition-colors duration-150 ease-in-out`}>
-                    {item.isEditing ? (
-                      <div className="space-y-3">
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-0.5">Nome</label>
-                          <input type="text" value={item.nome_produto} onChange={(e) => handleEditInputChange(item.id, 'nome_produto', e.target.value)} className={formFieldClasses} />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-0.5">Categoria</label>
-                          <select value={item.categoria} onChange={(e) => handleEditInputChange(item.id, 'categoria', e.target.value)} className={formFieldClasses}>
-                            {categoriasDefinidas.map(cat => (<option key={cat} value={cat}>{cat}</option>))}
-                             <option value="">Sem Categoria</option> {/* Permite desassociar categoria */}
-                          </select>
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-0.5">Disponível</label>
-                          <select value={item.disponivel} onChange={(e) => handleEditInputChange(item.id, 'disponivel', e.target.value as "Sim" | "Não")} className={`${formFieldClasses} ${item.disponivel === 'Sim' ? 'bg-green-50' : 'bg-red-50'}`}>
-                            <option value="Sim">Sim</option>
-                            <option value="Não">Não</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-0.5">Descrição</label>
-                          <textarea value={item.descricao_produto} onChange={(e) => handleEditInputChange(item.id, 'descricao_produto', e.target.value)} rows={2} className={formFieldClasses} />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-0.5">Observação</label>
-                          <textarea value={item.observacao} onChange={(e) => handleEditInputChange(item.id, 'observacao', e.target.value)} rows={1} className={formFieldClasses} />
-                        </div>
-                        <div className="flex justify-end space-x-2 mt-3">
-                          <button onClick={() => toggleEditMode(item.id)} className="btn-icon text-gray-600 hover:text-gray-800" title="Cancelar Edição">
-                              <XCircle size={20}/>
-                          </button>
-                        </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {itensDaCategoria.map(item => (
+                <div key={item.id} className={`p-5 rounded-lg shadow-lg border ${item.isEditing ? 'border-pink-500 ring-2 ring-pink-300 bg-pink-50' : 'border-gray-200 bg-white'} transition-colors duration-150 ease-in-out`}>
+                  {item.isEditing ? (
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-0.5">Nome</label>
+                        <input type="text" value={item.nome_produto} onChange={(e) => handleEditInputChange(item.id, 'nome_produto', e.target.value)} className={formFieldClasses} />
                       </div>
-                    ) : (
-                      <div className="flex flex-col justify-between h-full">
-                          <div>
-                              <h4 className="text-xl font-semibold text-gray-800 mb-1">{item.nome_produto || "(Item sem nome)"}</h4>
-                              <p className={`text-sm font-medium mb-2 px-2 py-0.5 inline-block rounded-full ${item.disponivel === 'Sim' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                                  {item.disponivel === 'Sim' ? 'Disponível' : 'Indisponível'}
-                              </p>
-                              {item.descricao_produto && <p className="text-gray-600 text-sm mt-1 mb-3 leading-relaxed"><strong className="font-medium text-gray-700">Descrição:</strong> {item.descricao_produto}</p>}
-                              {item.observacao && <p className="text-gray-500 text-xs mt-1"><strong>Obs:</strong> {item.observacao}</p>}
-                          </div>
-                          <div className="mt-4 pt-3 border-t border-gray-200 flex justify-end space-x-2">
-                              <button onClick={() => toggleEditMode(item.id)} title="Editar Item" className="btn-icon text-blue-600 hover:text-blue-800">
-                                  <Edit3 size={18} />
-                              </button>
-                              <button onClick={() => openDeleteConfirmationModal(item)} title="Remover Item" className="btn-icon text-red-600 hover:text-red-800">
-                                  <Trash2 size={18} />
-                              </button>
-                          </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-0.5">Categoria</label>
+                        <select value={item.categoria} onChange={(e) => handleEditInputChange(item.id, 'categoria', e.target.value)} className={formFieldClasses}>
+                          {categoriasDefinidas.map(cat => (<option key={cat} value={cat}>{cat}</option>))}
+                           <option value="">Sem Categoria</option>
+                        </select>
                       </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              // Mensagem para categorias definidas que estão vazias
-              categoriaNome !== 'Sem Categoria' && <p className="text-gray-500 italic">Nenhum item nesta categoria.</p>
-            )}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-0.5">Disponível</label>
+                        <select value={item.disponivel} onChange={(e) => handleEditInputChange(item.id, 'disponivel', e.target.value as "Sim" | "Não")} className={`${formFieldClasses} ${item.disponivel === 'Sim' ? 'bg-green-50' : 'bg-red-50'}`}>
+                          <option value="Sim">Sim</option>
+                          <option value="Não">Não</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-0.5">Descrição</label>
+                        <textarea value={item.descricao_produto} onChange={(e) => handleEditInputChange(item.id, 'descricao_produto', e.target.value)} rows={2} className={formFieldClasses} />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-0.5">Promoções</label>
+                        <textarea value={item.promocoes || ''} onChange={(e) => handleEditInputChange(item.id, 'promocoes', e.target.value)} rows={2} className={formFieldClasses} />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-0.5">Observação</label>
+                        <textarea value={item.observacao} onChange={(e) => handleEditInputChange(item.id, 'observacao', e.target.value)} rows={1} className={formFieldClasses} />
+                      </div>
+                      <div className="flex justify-end space-x-2 mt-3">
+                        <button onClick={() => toggleEditMode(item.id)} className="btn-icon text-gray-600 hover:text-gray-800" title="Cancelar Edição">
+                            <XCircle size={20}/>
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col justify-between h-full">
+                        <div>
+                            <h4 className="text-xl font-semibold text-gray-800 mb-1">{item.nome_produto || "(Item sem nome)"}</h4>
+                            <p className={`text-sm font-medium mb-2 px-2 py-0.5 inline-block rounded-full ${item.disponivel === 'Sim' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                {item.disponivel === 'Sim' ? 'Disponível' : 'Indisponível'}
+                            </p>
+                            {item.descricao_produto && <p className="text-gray-600 text-sm mt-1 mb-3 leading-relaxed"><strong className="font-medium text-gray-700">Descrição:</strong> {item.descricao_produto}</p>}
+                            {item.promocoes && (
+                              <div className="mt-2 mb-3 p-2 bg-yellow-50 border border-yellow-200 rounded-md">
+                                <p className="text-yellow-700 text-sm"><strong className="font-medium text-yellow-800">Promoção:</strong> {item.promocoes}</p>
+                              </div>
+                            )}
+                            {item.observacao && <p className="text-gray-500 text-xs mt-1"><strong>Obs:</strong> {item.observacao}</p>}
+                        </div>
+                        <div className="mt-4 pt-3 border-t border-gray-200 flex justify-end space-x-2">
+                            <button onClick={() => toggleEditMode(item.id)} title="Editar Item" className="btn-icon text-blue-600 hover:text-blue-800">
+                                <Edit3 size={18} />
+                            </button>
+                            <button onClick={() => openDeleteConfirmationModal(item)} title="Remover Item" className="btn-icon text-red-600 hover:text-red-800">
+                                <Trash2 size={18} />
+                            </button>
+                        </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
         );
       })}
-      {/* Seção para itens "Sem Categoria", se houver */}
       {(groupedItens['Sem Categoria'] && groupedItens['Sem Categoria'].length > 0) && (
           <div key="Sem Categoria" className="mb-8">
             <h3 className="text-2xl font-semibold text-gray-500 mb-4 border-b-2 border-gray-300 pb-2">Sem Categoria</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {(groupedItens['Sem Categoria'].sort((a, b) => (a.nome_produto || '').localeCompare(b.nome_produto || ''))).map(item => (
                 <div key={item.id} className={`p-5 rounded-lg shadow-lg border ${item.isEditing ? 'border-pink-500 ring-2 ring-pink-300 bg-pink-50' : 'border-gray-200 bg-white'} transition-colors duration-150 ease-in-out`}>
-                  {/* ... (renderização do item similar à de cima) ... */}
                   {item.isEditing ? (
-                      <div className="space-y-3">
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-0.5">Nome</label>
-                          <input type="text" value={item.nome_produto} onChange={(e) => handleEditInputChange(item.id, 'nome_produto', e.target.value)} className={formFieldClasses} />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-0.5">Categoria</label>
-                          <select value={item.categoria} onChange={(e) => handleEditInputChange(item.id, 'categoria', e.target.value)} className={formFieldClasses}>
-                            {categoriasDefinidas.map(cat => (<option key={cat} value={cat}>{cat}</option>))}
-                            <option value="">Sem Categoria</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-0.5">Disponível</label>
-                          <select value={item.disponivel} onChange={(e) => handleEditInputChange(item.id, 'disponivel', e.target.value as "Sim" | "Não")} className={`${formFieldClasses} ${item.disponivel === 'Sim' ? 'bg-green-50' : 'bg-red-50'}`}>
-                            <option value="Sim">Sim</option>
-                            <option value="Não">Não</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-0.5">Descrição</label>
-                          <textarea value={item.descricao_produto} onChange={(e) => handleEditInputChange(item.id, 'descricao_produto', e.target.value)} rows={2} className={formFieldClasses} />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-0.5">Observação</label>
-                          <textarea value={item.observacao} onChange={(e) => handleEditInputChange(item.id, 'observacao', e.target.value)} rows={1} className={formFieldClasses} />
-                        </div>
-                        <div className="flex justify-end space-x-2 mt-3">
-                          <button onClick={() => toggleEditMode(item.id)} className="btn-icon text-gray-600 hover:text-gray-800" title="Cancelar Edição">
-                              <XCircle size={20}/>
-                          </button>
-                        </div>
+                    <div className="space-y-3">
+                      <div><label className="block text-sm font-medium text-gray-700 mb-0.5">Nome</label><input type="text" value={item.nome_produto} onChange={(e) => handleEditInputChange(item.id, 'nome_produto', e.target.value)} className={formFieldClasses} /></div>
+                      <div><label className="block text-sm font-medium text-gray-700 mb-0.5">Categoria</label><select value={item.categoria} onChange={(e) => handleEditInputChange(item.id, 'categoria', e.target.value)} className={formFieldClasses}>{categoriasDefinidas.map(cat => (<option key={cat} value={cat}>{cat}</option>))}<option value="">Sem Categoria</option></select></div>
+                      <div><label className="block text-sm font-medium text-gray-700 mb-0.5">Disponível</label><select value={item.disponivel} onChange={(e) => handleEditInputChange(item.id, 'disponivel', e.target.value as "Sim" | "Não")} className={`${formFieldClasses} ${item.disponivel === 'Sim' ? 'bg-green-50' : 'bg-red-50'}`}><option value="Sim">Sim</option><option value="Não">Não</option></select></div>
+                      <div><label className="block text-sm font-medium text-gray-700 mb-0.5">Descrição</label><textarea value={item.descricao_produto} onChange={(e) => handleEditInputChange(item.id, 'descricao_produto', e.target.value)} rows={2} className={formFieldClasses} /></div>
+                      <div><label className="block text-sm font-medium text-gray-700 mb-0.5">Promoções</label><textarea value={item.promocoes || ''} onChange={(e) => handleEditInputChange(item.id, 'promocoes', e.target.value)} rows={2} className={formFieldClasses} /></div>
+                      <div><label className="block text-sm font-medium text-gray-700 mb-0.5">Observação</label><textarea value={item.observacao} onChange={(e) => handleEditInputChange(item.id, 'observacao', e.target.value)} rows={1} className={formFieldClasses} /></div>
+                      <div className="flex justify-end space-x-2 mt-3"><button onClick={() => toggleEditMode(item.id)} className="btn-icon text-gray-600 hover:text-gray-800" title="Cancelar Edição"><XCircle size={20}/></button></div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col justify-between h-full">
+                      <div>
+                        <h4 className="text-xl font-semibold text-gray-800 mb-1">{item.nome_produto || "(Item sem nome)"}</h4>
+                        <p className={`text-sm font-medium mb-2 px-2 py-0.5 inline-block rounded-full ${item.disponivel === 'Sim' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{item.disponivel === 'Sim' ? 'Disponível' : 'Indisponível'}</p>
+                        {item.descricao_produto && <p className="text-gray-600 text-sm mt-1 mb-3 leading-relaxed"><strong className="font-medium text-gray-700">Descrição:</strong> {item.descricao_produto}</p>}
+                        {item.promocoes && <div className="mt-2 mb-3 p-2 bg-yellow-50 border border-yellow-200 rounded-md"><p className="text-yellow-700 text-sm"><strong className="font-medium text-yellow-800">Promoção:</strong> {item.promocoes}</p></div>}
+                        {item.observacao && <p className="text-gray-500 text-xs mt-1"><strong>Obs:</strong> {item.observacao}</p>}
                       </div>
-                    ) : (
-                      <div className="flex flex-col justify-between h-full">
-                          <div>
-                              <h4 className="text-xl font-semibold text-gray-800 mb-1">{item.nome_produto || "(Item sem nome)"}</h4>
-                              <p className={`text-sm font-medium mb-2 px-2 py-0.5 inline-block rounded-full ${item.disponivel === 'Sim' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                                  {item.disponivel === 'Sim' ? 'Disponível' : 'Indisponível'}
-                              </p>
-                              {item.descricao_produto && <p className="text-gray-600 text-sm mt-1 mb-3 leading-relaxed"><strong className="font-medium text-gray-700">Descrição:</strong> {item.descricao_produto}</p>}
-                              {item.observacao && <p className="text-gray-500 text-xs mt-1"><strong>Obs:</strong> {item.observacao}</p>}
-                          </div>
-                          <div className="mt-4 pt-3 border-t border-gray-200 flex justify-end space-x-2">
-                              <button onClick={() => toggleEditMode(item.id)} title="Editar Item" className="btn-icon text-blue-600 hover:text-blue-800">
-                                  <Edit3 size={18} />
-                              </button>
-                              <button onClick={() => openDeleteConfirmationModal(item)} title="Remover Item" className="btn-icon text-red-600 hover:text-red-800">
-                                  <Trash2 size={18} />
-                              </button>
-                          </div>
+                      <div className="mt-4 pt-3 border-t border-gray-200 flex justify-end space-x-2">
+                        <button onClick={() => toggleEditMode(item.id)} title="Editar Item" className="btn-icon text-blue-600 hover:text-blue-800"><Edit3 size={18} /></button>
+                        <button onClick={() => openDeleteConfirmationModal(item)} title="Remover Item" className="btn-icon text-red-600 hover:text-red-800"><Trash2 size={18} /></button>
                       </div>
-                    )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

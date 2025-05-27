@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { supabase } from "../supabaseClient";
-import { CheckCircle, AlertCircle, Loader2, Edit3, Trash2, Copy } from "lucide-react"; 
+import { CheckCircle, AlertCircle, Loader2, Edit3, Trash2, Copy } from "lucide-react"; // Adicionado Edit3, Trash2, Copy
 
 // Tipos exportados
 export type StatusPedido = "Aguardando" | "Em preparo" | "Pronto" | "Enviado" | "Entregue";
@@ -15,12 +15,12 @@ export interface Pedido {
   hora_criacao_pedido: string;
 }
 
-// Props do componente
+// Props do componente - Removido onUpdate, adicionado onEdit, onDelete
 interface ComandaCardProps {
   pedido: Pedido;
-  isNew?: boolean;
-  onEdit?: () => void;
-  onDelete?: () => void;
+  isNew?: boolean; 
+  onEdit?: () => void; // Adicionado
+  onDelete?: () => void; // Adicionado
 }
 
 // Opções para selects
@@ -31,49 +31,52 @@ const pagamentoOptions: StatusPagamento[] = ["Aguardando pagamento", "Pago"];
 const formatHoraPedido = (timestamp: string): string => {
   try {
     const date = new Date(timestamp);
+    // Formatando para HH:MM:SS
     return date.toLocaleTimeString("pt-BR", { 
-      timeZone: "America/Sao_Paulo",
+      timeZone: "America/Sao_Paulo", // Garantir fuso horário de São Paulo
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
     });
   } catch (e) {
     console.error("Erro ao formatar hora do pedido:", e);
-    return "--:--:--";
+    return "--:--:--"; // Retorno padrão em caso de erro
   }
 };
 
-// Componente para formatar o texto da comanda
+// Componente para formatar o texto da comanda com melhor espaçamento
 const FormattedComanda: React.FC<{ comandaText: string }> = ({ comandaText }) => {
   const lines = comandaText.split("\n");
   return (
-    <div className="text-left text-sm space-y-0.5">
+    // Ajustado para melhor leitura e quebra de linha
+    <div className="text-left text-sm space-y-1">
       {lines.map((line, index) => {
-        const parts = line.split(/:(.+)/);
+        const parts = line.split(/:(.+)/); // Divide no primeiro ':' encontrado
         if (parts.length > 1) {
           return (
             <div key={index}>
-              <span className="font-semibold text-gray-700">{parts[0]}:</span>
-              <span className="text-gray-600 break-words">{parts[1]}</span>
+              <span className="font-semibold text-gray-800">{parts[0]}:</span>
+              <span className="text-gray-700 break-words">{parts[1]}</span>
             </div>
           );
         }
-        return <div key={index} className="text-gray-600 break-words">{line}</div>;
+        // Linhas sem ':' são renderizadas diretamente
+        return <div key={index} className="text-gray-700 break-words">{line}</div>;
       })}
     </div>
   );
 };
 
-// Componente principal do Card da Comanda
+// Componente principal do Card da Comanda - Removido onUpdate dos parâmetros
 const ComandaCard: React.FC<ComandaCardProps> = ({ pedido, isNew, onEdit, onDelete }) => {
   const [isUpdating, setIsUpdating] = useState(false);
   const [updateSuccess, setUpdateSuccess] = useState<boolean | null>(null);
-  const [copySuccess, setCopySuccess] = useState<boolean>(false);
+  const [copySuccess, setCopySuccess] = useState<boolean>(false); // Estado para feedback de cópia
 
   // Feedback visual após atualização
   const showFeedback = (success: boolean) => {
     setUpdateSuccess(success);
-    setTimeout(() => setUpdateSuccess(null), 2000); 
+    setTimeout(() => setUpdateSuccess(null), 2000); // Feedback some após 2 segundos
   };
 
   // Atualizar status do pedido
@@ -90,8 +93,7 @@ const ComandaCard: React.FC<ComandaCardProps> = ({ pedido, isNew, onEdit, onDele
       alert(`Falha ao atualizar status do pedido: ${error.message}`);
       showFeedback(false);
     } else {
-      // Não precisa chamar onUpdate() aqui, o realtime deve cuidar disso
-      // onUpdate(); 
+      // Não chama mais onUpdate(), o Realtime deve atualizar
       showFeedback(true);
     }
   };
@@ -110,8 +112,7 @@ const ComandaCard: React.FC<ComandaCardProps> = ({ pedido, isNew, onEdit, onDele
       alert(`Falha ao atualizar status do pagamento: ${error.message}`);
       showFeedback(false);
     } else {
-      // Não precisa chamar onUpdate() aqui, o realtime deve cuidar disso
-      // onUpdate();
+      // Não chama mais onUpdate()
       showFeedback(true);
     }
   };
@@ -129,9 +130,10 @@ const ComandaCard: React.FC<ComandaCardProps> = ({ pedido, isNew, onEdit, onDele
       });
   };
 
-  // Classes do card - Restaurando sombra e transição
-  const cardClasses = `border border-gray-200 p-4 rounded-xl shadow-md hover:shadow-lg transition-all duration-300 bg-white group flex flex-col justify-between min-h-[450px] relative ${
-    isNew ? "ring-2 ring-pink-400 ring-offset-2" : ""
+  // Classes do card - Restaurando sombra sutil e transição suave
+  const cardClasses = `border border-gray-200 p-4 rounded-xl shadow-md hover:shadow-lg transition-all duration-300 bg-white group flex flex-col justify-between min-h-[480px] relative ${
+    // Animação de destaque para novos pedidos
+    isNew ? "ring-2 ring-pink-400 ring-offset-2 animate-pulse-fast" : ""
   }`;
 
   return (
@@ -142,7 +144,7 @@ const ComandaCard: React.FC<ComandaCardProps> = ({ pedido, isNew, onEdit, onDele
           <Loader2 className="h-8 w-8 text-pink-500 animate-spin" />
         </div>
       )}
-      {/* Feedback de Sucesso/Erro (Update) */}
+      {/* Feedback de Sucesso/Erro (Update) - Posicionado no canto superior direito */}
       {updateSuccess === true && (
         <div className="absolute top-3 right-3 bg-green-100 p-1 rounded-full z-20 shadow-sm">
           <CheckCircle className="h-5 w-5 text-green-600" />
@@ -159,6 +161,7 @@ const ComandaCard: React.FC<ComandaCardProps> = ({ pedido, isNew, onEdit, onDele
         {/* Cabeçalho: Nome e Hora */}
         <div className="flex justify-between items-start mb-3 pb-2 border-b border-gray-100">
           <h2 className="text-lg font-semibold text-gray-800 break-words">
+            {/* Usa nome do cliente, ou telefone como fallback */}
             {pedido.nome_cliente || pedido.telefone_key}
           </h2>
           {pedido.hora_criacao_pedido && (
@@ -168,30 +171,31 @@ const ComandaCard: React.FC<ComandaCardProps> = ({ pedido, isNew, onEdit, onDele
           )}
         </div>
         
-        {/* Detalhes da Comanda - Aumentando altura máxima */}
+        {/* Detalhes da Comanda - Aumentando altura máxima para melhor visualização */}
         <div className="mb-4">
           <h3 className="text-sm font-medium text-gray-700 mb-1">Comanda:</h3>
-          <div className="text-gray-700 whitespace-pre-wrap bg-gray-50 p-3 rounded-lg border border-gray-200 max-h-48 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100 text-justify">
+          <div className="text-gray-700 whitespace-pre-wrap bg-gray-50 p-3 rounded-lg border border-gray-200 max-h-52 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
             <FormattedComanda comandaText={pedido.comanda} />
           </div>
-          {/* Botão Copiar - Estilo restaurado */}
+          {/* Botão Copiar - Estilo minimalista "Apple" */}
           <button 
             onClick={handleCopiarComanda}
-            className={`mt-2 text-xs font-medium px-3 py-1 rounded-md transition-all duration-150 flex items-center focus:outline-none focus:ring-2 focus:ring-offset-1 ${copySuccess ? "bg-green-500 text-white focus:ring-green-400" : "bg-gray-100 text-gray-700 hover:bg-gray-200 focus:ring-gray-300"}`}
+            className={`mt-2 text-xs font-medium px-3 py-1 rounded-md transition-all duration-150 flex items-center focus:outline-none focus:ring-2 focus:ring-offset-1 ${copySuccess ? "bg-green-100 text-green-700 border border-green-200 focus:ring-green-300" : "bg-gray-100 text-gray-700 hover:bg-gray-200 border border-gray-200 focus:ring-gray-300"}`}
           >
             <Copy size={12} className="mr-1.5" /> {copySuccess ? "Copiado!" : "Copiar"}
           </button>
         </div>
 
-        {/* Select Status Pedido - Restaurando hover/focus */}
+        {/* Select Status Pedido - Estilo "Apple" com hover */}
         <div className="mb-4">
           <label htmlFor={`status-${pedido.telefone_key}`} className="block text-sm font-medium text-gray-700 mb-1">Status Pedido:</label>
           <select 
             id={`status-${pedido.telefone_key}`}
             value={pedido.status_pedido}
             onChange={(e) => handleStatusChange(e.target.value as StatusPedido)}
-            className="w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-300 focus:border-pink-400 text-sm appearance-none bg-white bg-no-repeat bg-right pr-8 transition-all duration-150"
-            style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns=\'http://www.w3.org/2000/svg\' fill=\'none\' viewBox=\'0 0 20 20\'%3e%3cpath stroke=\'%236b7280\' stroke-linecap=\'round\' stroke-linejoin=\'round\' stroke-width=\'1.5\' d=\'M6 8l4 4 4-4\'/\%3e%3c/svg%3e")`}}
+            className="w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-300 focus:border-pink-400 text-sm appearance-none bg-white bg-no-repeat bg-right pr-8 transition-all duration-150 hover:border-pink-400"
+            // Ícone de seta SVG inline para consistência
+            style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`}}
           >
             {statusOptions.map(option => (
               <option key={option} value={option}>{option}</option>
@@ -199,15 +203,15 @@ const ComandaCard: React.FC<ComandaCardProps> = ({ pedido, isNew, onEdit, onDele
           </select>
         </div>
 
-        {/* Select Status Pagamento - Restaurando hover/focus */}
+        {/* Select Status Pagamento - Estilo "Apple" com hover */}
         <div className="mb-4">
           <label htmlFor={`pagamento-${pedido.telefone_key}`} className="block text-sm font-medium text-gray-700 mb-1">Status Pagamento:</label>
           <select 
             id={`pagamento-${pedido.telefone_key}`}
             value={pedido.pagamento}
             onChange={(e) => handlePagamentoChange(e.target.value as StatusPagamento)}
-            className="w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-300 focus:border-pink-400 text-sm appearance-none bg-white bg-no-repeat bg-right pr-8 transition-all duration-150"
-            style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns=\'http://www.w3.org/2000/svg\' fill=\'none\' viewBox=\'0 0 20 20\'%3e%3cpath stroke=\'%236b7280\' stroke-linecap=\'round\' stroke-linejoin=\'round\' stroke-width=\'1.5\' d=\'M6 8l4 4 4-4\'/\%3e%3c/svg%3e")`}}
+            className="w-full p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-300 focus:border-pink-400 text-sm appearance-none bg-white bg-no-repeat bg-right pr-8 transition-all duration-150 hover:border-pink-400"
+            style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`}}
           >
             {pagamentoOptions.map(option => (
               <option key={option} value={option}>{option}</option>
@@ -218,7 +222,7 @@ const ComandaCard: React.FC<ComandaCardProps> = ({ pedido, isNew, onEdit, onDele
 
       {/* Rodapé com Botões de Ação e Telefone */}
       <div className="mt-auto pt-3 border-t border-gray-100">
-        {/* Botões Editar/Excluir - Estilo restaurado (minimalista) */}
+        {/* Botões Editar/Excluir - Estilo minimalista "Apple" */}
         <div className="flex justify-center space-x-3 mb-3">
           {onEdit && (
             <button 

@@ -4,7 +4,7 @@ import { supabase } from "./supabaseClient";
 import ComandaCard, { Pedido } from "./components/ComandaCard";
 import CardapioPage from "./components/CardapioPage";
 import type { RealtimeChannel } from "@supabase/supabase-js";
-import { AlertTriangle, Loader2, X, Save, Edit3, Trash2 } from "lucide-react";
+import { AlertTriangle, Loader2, X, Save, Trash2 } from "lucide-react";
 
 const notificationSound = "/assets/sounds/notify.mp3";
 

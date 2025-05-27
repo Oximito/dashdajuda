@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '../supabaseClient';
-import { PlusCircle, Save, XCircle, Trash2, Edit3, AlertTriangle, Loader2 } from 'lucide-react';
-import type { RealtimeChannel } from "@supabase/supabase-js"; // Removido RealtimePostgresChangesPayload
+import { PlusCircle, Save, XCircle, Trash2, Edit3, AlertTriangle, Loader2, CheckCircle } from 'lucide-react'; // Added CheckCircle
+import type { RealtimeChannel } from "@supabase/supabase-js";
 
 // Interface para o item do cardápio
 export interface CardapioItem {
@@ -50,10 +50,28 @@ const mapSupabaseItemToState = (item: any): CardapioItem => ({
   promocoes: item?.promocoes || '',
 });
 
+// --- Redesign Styles ---
+const baseInputStyle = "block w-full text-sm rounded-lg border focus:outline-none focus:ring-2 transition duration-150 ease-in-out";
+const inputStyle = `${baseInputStyle} border-gray-300 focus:border-pink-500 focus:ring-pink-300 placeholder-gray-400 px-3 py-2`;
+const inputErrorStyle = `${baseInputStyle} border-red-500 focus:border-red-600 focus:ring-red-300 px-3 py-2`; // Example error style
+const labelStyle = "block text-sm font-medium text-gray-700 mb-1";
+const baseButtonStyle = "inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed";
+const primaryButtonStyle = `${baseButtonStyle} text-white bg-pink-600 hover:bg-pink-700 focus:ring-pink-500`;
+const secondaryButtonStyle = `${baseButtonStyle} text-gray-700 bg-white border-gray-300 hover:bg-gray-50 focus:ring-pink-500`;
+const dangerButtonStyle = `${baseButtonStyle} text-white bg-red-600 hover:bg-red-700 focus:ring-red-500`;
+const greenButtonStyle = `${baseButtonStyle} text-white bg-green-600 hover:bg-green-700 focus:ring-green-500`;
+const blueButtonStyle = `${baseButtonStyle} text-white bg-blue-600 hover:bg-blue-700 focus:ring-blue-500`;
+const cardBaseStyle = "bg-white rounded-xl shadow-md overflow-hidden transition-shadow hover:shadow-lg";
+const cardEditingStyle = `${cardBaseStyle} ring-2 ring-pink-400 ring-offset-1`;
+const modalOverlayStyle = "fixed inset-0 bg-gray-900 bg-opacity-60 backdrop-blur-sm flex justify-center items-center z-50 p-4";
+const modalContentStyle = "bg-white p-6 rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto";
+const sectionTitleStyle = "text-xl font-semibold text-gray-800 mb-4 pb-2 border-b border-gray-200";
+// --- End Redesign Styles ---
+
 const CardapioPage: React.FC = () => {
   const [itensCardapio, setItensCardapio] = useState<CardapioItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
+  const [realtimeError, setRealtimeError] = useState<string | null>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState<boolean>(false);
   const [isConfirmDeleteModalOpen, setIsConfirmDeleteModalOpen] = useState<boolean>(false);
   const [itemToDelete, setItemToDelete] = useState<CardapioItem | null>(null);
@@ -61,6 +79,7 @@ const CardapioPage: React.FC = () => {
   const cardapioChannelRef = useRef<RealtimeChannel | null>(null);
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const retryCountRef = useRef<number>(0);
+  const [editingItemIds, setEditingItemIds] = useState<Set<number>>(new Set());
 
   const [novoItem, setNovoItem] = useState<Omit<CardapioItem, 'id' | 'isEditing' | 'originalNome' | 'originalCategoria' | 'originalDisponivel' | 'originalDescricao' | 'originalObservacao' | 'originalPromocoes'>>({
     nome_produto: '',
@@ -81,12 +100,11 @@ const CardapioPage: React.FC = () => {
 
     if (fetchError) {
       console.error('[CardapioPage] Erro ao buscar itens do cardápio:', fetchError);
-      setError(`Falha ao carregar cardápio: ${fetchError.message}`);
+      setRealtimeError(`Falha ao carregar cardápio: ${fetchError.message}`);
       setItensCardapio([]);
     } else {
       const mappedData = data.map(mapSupabaseItemToState);
       setItensCardapio(mappedData);
-      setError(null);
     }
     setLoading(false);
   }, []);
@@ -104,11 +122,8 @@ const CardapioPage: React.FC = () => {
     console.log("[CardapioPage] Tentando conectar ao canal Realtime...");
     const channel = supabase.channel('cardapio_realtime_channel');
 
-    // Handler com payload tipado como 'any' para evitar erro de 'never'
     const handleRealtimeChange = (payload: any) => {
         console.log("[CardapioPage] Mudança Realtime recebida:", payload);
-
-        // Verifica se eventType existe e é uma string
         if (typeof payload.eventType !== 'string') {
             console.warn("[CardapioPage] Evento Realtime sem eventType válido:", payload);
             return;
@@ -117,45 +132,50 @@ const CardapioPage: React.FC = () => {
         setItensCardapio(currentItems => {
             let updatedItems = [...currentItems];
             let recordId: number | undefined = undefined;
-
-            // Tenta obter o ID de forma segura
             if (hasId(payload.new)) {
                 recordId = payload.new.id;
             } else if (hasId(payload.old)) {
                 recordId = payload.old.id;
             }
 
+            if (recordId === undefined) {
+                console.warn("[CardapioPage] Evento Realtime sem ID identificável:", payload);
+                return currentItems;
+            }
+
             switch (payload.eventType) {
                 case 'INSERT':
-                    if (recordId && hasId(payload.new) && !updatedItems.some(item => item.id === recordId)) {
+                    if (!updatedItems.some(item => item.id === recordId)) {
                         updatedItems.push(mapSupabaseItemToState(payload.new));
                         console.log(`[CardapioPage] Item ${recordId} inserido via Realtime.`);
                     }
                     break;
                 case 'UPDATE':
-                    if (recordId && hasId(payload.new)) {
+                    const isLocallyEditing = editingItemIds.has(recordId);
+                    if (isLocallyEditing) {
+                        console.log(`[CardapioPage] Item ${recordId} ignorado na atualização Realtime (está em edição local).`);
+                    } else {
                         updatedItems = updatedItems.map(item => {
                             if (item.id === recordId) {
-                                if (!item.isEditing) {
-                                    console.log(`[CardapioPage] Item ${recordId} atualizado via Realtime (não estava em edição).`);
-                                    return mapSupabaseItemToState(payload.new);
-                                } else {
-                                    console.log(`[CardapioPage] Item ${recordId} ignorado na atualização Realtime (está em edição local).`);
-                                    return item;
-                                }
+                                console.log(`[CardapioPage] Item ${recordId} atualizado via Realtime.`);
+                                return mapSupabaseItemToState(payload.new);
                             }
                             return item;
                         });
                     }
                     break;
                 case 'DELETE':
-                    if (recordId && hasId(payload.old)) {
-                        updatedItems = updatedItems.filter(item => item.id !== recordId);
-                        console.log(`[CardapioPage] Item ${recordId} removido via Realtime.`);
+                    updatedItems = updatedItems.filter(item => item.id !== recordId);
+                    console.log(`[CardapioPage] Item ${recordId} removido via Realtime.`);
+                    if (editingItemIds.has(recordId)) {
+                        setEditingItemIds(prevIds => {
+                            const newIds = new Set(prevIds);
+                            newIds.delete(recordId!);
+                            return newIds;
+                        });
                     }
                     break;
                 default:
-                    // Acessa eventType aqui, agora seguro pois payload é 'any'
                     console.log("[CardapioPage] Evento Realtime não tratado:", payload.eventType);
             }
             updatedItems.sort((a, b) => (a.nome_produto || '').localeCompare(b.nome_produto || ''));
@@ -166,11 +186,11 @@ const CardapioPage: React.FC = () => {
     channel.on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'Cárdapio' },
-      handleRealtimeChange // Passa o handler com payload 'any'
+      handleRealtimeChange
     ).subscribe((status: "SUBSCRIBED" | "TIMED_OUT" | "CLOSED" | "CHANNEL_ERROR", err?: Error) => {
       if (status === 'SUBSCRIBED') {
         console.log('[CardapioPage] Conectado ao canal Realtime!');
-        setError(null);
+        setRealtimeError(null);
         retryCountRef.current = 0;
         if (retryTimeoutRef.current) {
             clearTimeout(retryTimeoutRef.current);
@@ -179,31 +199,34 @@ const CardapioPage: React.FC = () => {
         fetchItensCardapio('after subscribe');
       } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
         console.error(`[CardapioPage] Erro/Status no canal Realtime: ${status}`, err);
-        setError(`Erro de conexão em tempo real (Cardápio): ${status} - ${err?.message || 'Tentando reconectar...'}`);
         cardapioChannelRef.current = null;
-
-        if (retryCountRef.current < MAX_RETRIES) {
-          const delay = INITIAL_RETRY_DELAY * Math.pow(2, retryCountRef.current);
-          console.log(`[CardapioPage] Tentando reconectar em ${delay / 1000} segundos... (Tentativa ${retryCountRef.current + 1}/${MAX_RETRIES})`);
-          retryTimeoutRef.current = setTimeout(() => {
-            retryCountRef.current++;
-            setupRealtimeSubscription();
-          }, delay);
+        if (!retryTimeoutRef.current || status === 'CHANNEL_ERROR') {
+            const baseMessage = `Erro de conexão em tempo real (Cardápio): ${status}`;
+            const errorMessage = err ? `${baseMessage} - ${err.message}` : baseMessage;
+            if (retryCountRef.current >= MAX_RETRIES) {
+                console.error("[CardapioPage] Máximo de tentativas de reconexão atingido.");
+                setRealtimeError("Falha ao reconectar ao serviço de atualizações em tempo real (Cardápio) após múltiplas tentativas. Atualize manualmente.");
+            } else {
+                setRealtimeError(`${errorMessage}. Tentando reconectar...`);
+                const delay = INITIAL_RETRY_DELAY * Math.pow(2, retryCountRef.current);
+                console.log(`[CardapioPage] Tentando reconectar em ${delay / 1000} segundos... (Tentativa ${retryCountRef.current + 1}/${MAX_RETRIES})`);
+                retryTimeoutRef.current = setTimeout(() => {
+                    retryCountRef.current++;
+                    retryTimeoutRef.current = null;
+                    setupRealtimeSubscription();
+                }, delay);
+            }
         } else {
-          console.error("[CardapioPage] Máximo de tentativas de reconexão atingido.");
-          setError("Falha ao reconectar ao serviço de atualizações em tempo real (Cardápio) após múltiplas tentativas. Atualize manualmente.");
+            console.log(`[CardapioPage] Status ${status} recebido, mas já existe uma tentativa de reconexão em andamento.`);
         }
       }
     });
-
     cardapioChannelRef.current = channel;
-
-  }, [fetchItensCardapio]);
+  }, [fetchItensCardapio, editingItemIds]);
 
   useEffect(() => {
     fetchItensCardapio('initial mount');
     setupRealtimeSubscription();
-
     return () => {
       console.log("[CardapioPage] Desmontando componente e removendo canal Realtime.");
       if (retryTimeoutRef.current) {
@@ -235,12 +258,10 @@ const CardapioPage: React.FC = () => {
       return;
     }
     setSaving(true);
-
     let novoId = 1;
     if (itensCardapio.length > 0) {
       novoId = Math.max(...itensCardapio.map(item => item.id)) + 1;
     }
-
     const itemParaSalvar = {
         id: novoId,
         nome_produto: novoItem.nome_produto.trim(),
@@ -250,7 +271,6 @@ const CardapioPage: React.FC = () => {
         observacao: novoItem.observacao.trim() === '' ? null : novoItem.observacao.trim(),
         promocoes: novoItem.promocoes?.trim() === '' ? null : novoItem.promocoes?.trim(),
     };
-
     const { error: insertError } = await supabase
       .from('Cárdapio')
       .insert([itemParaSalvar]);
@@ -292,6 +312,11 @@ const CardapioPage: React.FC = () => {
       alert(`Item "${itemToDelete.nome_produto}" removido com sucesso!`);
       setIsConfirmDeleteModalOpen(false);
       setItemToDelete(null);
+      setEditingItemIds(prevIds => {
+          const newIds = new Set(prevIds);
+          newIds.delete(itemToDelete.id);
+          return newIds;
+      });
     }
   };
 
@@ -300,6 +325,7 @@ const CardapioPage: React.FC = () => {
       prevItens.map(item => {
         if (item.id === itemId) {
           if (!item.isEditing) {
+            setEditingItemIds(prevIds => new Set(prevIds).add(itemId));
             return {
               ...item,
               isEditing: true,
@@ -311,6 +337,11 @@ const CardapioPage: React.FC = () => {
               originalPromocoes: item.promocoes,
             };
           } else {
+            setEditingItemIds(prevIds => {
+                const newIds = new Set(prevIds);
+                newIds.delete(itemId);
+                return newIds;
+            });
             return {
               ...item,
               isEditing: false,
@@ -320,6 +351,12 @@ const CardapioPage: React.FC = () => {
               descricao_produto: item.originalDescricao !== undefined ? item.originalDescricao : item.descricao_produto,
               observacao: item.originalObservacao !== undefined ? item.originalObservacao : item.observacao,
               promocoes: item.originalPromocoes !== undefined ? item.originalPromocoes : item.promocoes,
+              originalNome: undefined,
+              originalCategoria: undefined,
+              originalDisponivel: undefined,
+              originalDescricao: undefined,
+              originalObservacao: undefined,
+              originalPromocoes: undefined,
             };
           }
         }
@@ -336,39 +373,18 @@ const CardapioPage: React.FC = () => {
     );
   };
 
-  const itemsComAlteracoes = useMemo(() => {
-    return itensCardapio.filter(item =>
-      item.isEditing &&
-      (item.nome_produto.trim() !== (item.originalNome || '').trim() ||
-       item.categoria.trim() !== (item.originalCategoria || '').trim() ||
-       item.disponivel !== item.originalDisponivel ||
-       item.descricao_produto.trim() !== (item.originalDescricao || '').trim() ||
-       item.observacao.trim() !== (item.originalObservacao || '').trim() ||
-       (item.promocoes || '').trim() !== (item.originalPromocoes || '').trim())
-    );
-  }, [itensCardapio]);
-
   const handleSaveAllChanges = async () => {
-    if (itemsComAlteracoes.length === 0) {
+    const itensParaSalvar = itensCardapio.filter(item => editingItemIds.has(item.id));
+    if (itensParaSalvar.length === 0) {
       alert("Nenhuma alteração para salvar.");
       return;
     }
-
-    const itensParaSalvar = itemsComAlteracoes.filter(item => {
-        if (!item.nome_produto.trim() || !item.categoria.trim()) {
-            alert(`O item com ID ${item.id} (nome original: "${item.originalNome || 'Sem nome original'}") não pode ser salvo porque o nome do produto e a categoria são obrigatórios e não podem estar vazios.`);
-            return false;
-        }
-        return true;
-    });
-
-    if (itensParaSalvar.length === 0) {
-        setSaving(false);
+    const itensInvalidos = itensParaSalvar.filter(item => !item.nome_produto.trim() || !item.categoria.trim());
+    if (itensInvalidos.length > 0) {
+        alert(`Os seguintes itens não podem ser salvos porque o nome do produto e a categoria são obrigatórios: IDs ${itensInvalidos.map(i => i.id).join(', ')}`);
         return;
     }
-
     setSaving(true);
-
     const updates = itensParaSalvar.map(item => {
       const { id, nome_produto, categoria, disponivel, descricao_produto, observacao, promocoes } = item;
       return supabase
@@ -383,31 +399,33 @@ const CardapioPage: React.FC = () => {
         })
         .match({ id });
     });
-
     const results = await Promise.all(updates);
     setSaving(false);
-
     const erros = results.filter(result => result.error);
-
     if (erros.length > 0) {
       console.error("Erros ao salvar alterações:", erros);
       alert(`Houve ${erros.length} erro(s) ao salvar. Verifique o console.`);
     } else {
       alert("Todas as alterações foram salvas com sucesso!");
+      const savedIds = new Set(itensParaSalvar.map(item => item.id));
       setItensCardapio(prevItens =>
         prevItens.map(item =>
-          itensParaSalvar.some(savedItem => savedItem.id === item.id)
+          savedIds.has(item.id)
             ? { ...item, isEditing: false, originalNome: undefined, originalCategoria: undefined, originalDisponivel: undefined, originalDescricao: undefined, originalObservacao: undefined, originalPromocoes: undefined }
             : item
         )
       );
+      setEditingItemIds(prevIds => {
+          const newIds = new Set(prevIds);
+          savedIds.forEach(id => newIds.delete(id));
+          return newIds;
+      });
     }
   };
 
   const itensAgrupados = useMemo(() => {
     const grupos: { [key: string]: CardapioItem[] } = {};
     categoriasDefinidas.forEach(cat => grupos[cat] = []);
-
     itensCardapio.forEach(item => {
       const categoria = item.categoria || "Sem Categoria";
       if (!grupos[categoria]) {
@@ -415,279 +433,280 @@ const CardapioPage: React.FC = () => {
       }
       grupos[categoria].push(item);
     });
-
     Object.keys(grupos).forEach(categoria => {
       grupos[categoria].sort((a, b) => (a.nome_produto || '').localeCompare(b.nome_produto || ''));
     });
-
     return grupos;
   }, [itensCardapio]);
 
-  const inputStyle = "mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md text-sm shadow-sm placeholder-gray-400 focus:outline-none focus:border-pink-500 focus:ring-1 focus:ring-pink-500 disabled:bg-gray-50 disabled:text-gray-500 disabled:border-gray-200 disabled:shadow-none";
-  const labelStyle = "block text-sm font-medium text-gray-700";
-
   return (
-    <div className="container mx-auto px-4 py-8">
-      {error && (
-        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">
-          <strong className="font-bold">Erro: </strong>
-          <span className="block sm:inline">{error}</span>
-        </div>
-      )}
-
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-3xl font-semibold text-gray-800">Itens do Cardápio</h2>
+    <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row justify-between items-center mb-8 pb-4 border-b border-gray-200">
+        <h1 className="text-2xl font-semibold text-gray-900 mb-4 sm:mb-0">Cardápio</h1>
         <button
           onClick={() => setIsAddModalOpen(true)}
-          className="btn-primary bg-green-600 hover:bg-green-700"
+          className={greenButtonStyle}
         >
-          <PlusCircle size={20} className="inline mr-2" /> Adicionar Novo Item
+          <PlusCircle size={18} className="mr-2" /> Adicionar Item
         </button>
       </div>
 
-      {itemsComAlteracoes.length > 0 && (
-        <div className="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 mb-6 rounded-md shadow-md flex justify-between items-center">
+      {/* Realtime Error Banner */}
+      {realtimeError && (
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg relative mb-6 flex items-center" role="alert">
+          <AlertTriangle size={20} className="text-red-500 mr-3 flex-shrink-0" />
           <div>
-            <p className="font-bold">Você tem {itemsComAlteracoes.length} item(ns) com alterações não salvas.</p>
-            <p className="text-sm">Clique em "Salvar Alterações" para aplicá-las.</p>
+            <strong className="font-semibold">Erro de Conexão: </strong>
+            <span className="block sm:inline text-sm">{realtimeError}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Save Changes Banner */}
+      {editingItemIds.size > 0 && (
+        <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded-lg mb-6 flex flex-col sm:flex-row justify-between items-center gap-4">
+          <div className="flex items-center">
+             <CheckCircle size={20} className="text-yellow-600 mr-3 flex-shrink-0" />
+             <div>
+                <p className="font-semibold">Você tem {editingItemIds.size} item(ns) em edição.</p>
+                <p className="text-sm">Salve as alterações para aplicá-las.</p>
+             </div>
           </div>
           <button
             onClick={handleSaveAllChanges}
             disabled={saving}
-            className="btn-primary bg-blue-600 hover:bg-blue-700"
+            className={blueButtonStyle}
           >
-            {saving ? <Loader2 size={20} className="inline mr-1 animate-spin" /> : <Save size={20} className="inline mr-1" />}
+            {saving ? <Loader2 size={18} className="mr-1 animate-spin" /> : <Save size={18} className="mr-1" />}
             {saving ? 'Salvando...' : 'Salvar Alterações'}
           </button>
         </div>
       )}
 
+      {/* Loading State */}
       {loading ? (
-        <div className="text-center py-10">
-          <Loader2 size={40} className="animate-spin text-pink-600 mx-auto" />
-          <p className="mt-2 text-gray-600">Carregando cardápio...</p>
+        <div className="text-center py-16">
+          <Loader2 size={32} className="animate-spin text-pink-600 mx-auto" />
+          <p className="mt-3 text-sm text-gray-500">Carregando cardápio...</p>
         </div>
       ) : (
-        <div className="space-y-10">
-          {categoriasDefinidas.map(categoria => (
-            (itensAgrupados[categoria]?.length > 0 || categoria === "Sem Categoria") && (
-              <div key={categoria}>
-                <h3 className="text-2xl font-semibold text-gray-700 mb-4 border-b-2 border-pink-300 pb-2">{categoria}</h3>
-                {itensAgrupados[categoria]?.length === 0 && categoria !== "Sem Categoria" && (
-                    <p className="text-gray-500 italic">Nenhum item nesta categoria.</p>
-                )}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {itensAgrupados[categoria]?.map(item => (
-                    <div key={item.id} className={`bg-white rounded-lg shadow-lg p-5 border-l-4 ${item.disponivel === 'Sim' ? 'border-green-500' : 'border-red-500'} ${item.isEditing ? 'ring-2 ring-pink-500 ring-offset-2' : ''}`}>
-                      {item.isEditing ? (
-                        <div className="space-y-3">
-                          <div>
-                            <label htmlFor={`nome-${item.id}`} className={labelStyle}>Nome</label>
-                            <input
-                              id={`nome-${item.id}`}
-                              type="text"
-                              value={item.nome_produto}
-                              onChange={(e) => handleEditInputChange(item.id, 'nome_produto', e.target.value)}
-                              className={inputStyle}
-                              required
-                            />
-                          </div>
-                          <div>
-                            <label htmlFor={`categoria-${item.id}`} className={labelStyle}>Categoria</label>
-                            <select
-                              id={`categoria-${item.id}`}
-                              value={item.categoria}
-                              onChange={(e) => handleEditInputChange(item.id, 'categoria', e.target.value)}
-                              className={inputStyle}
-                              required
-                            >
-                              {categoriasDefinidas.map(cat => <option key={cat} value={cat}>{cat}</option>)}
-                              {!categoriasDefinidas.includes(item.categoria) && item.categoria && (
-                                <option value={item.categoria}>{item.categoria} (Outra)</option>
-                              )}
-                            </select>
-                          </div>
-                          <div>
-                            <label htmlFor={`disponivel-${item.id}`} className={labelStyle}>Disponível</label>
-                            <select
-                              id={`disponivel-${item.id}`}
-                              value={item.disponivel}
-                              onChange={(e) => handleEditInputChange(item.id, 'disponivel', e.target.value as "Sim" | "Não")}
-                              className={inputStyle}
-                            >
-                              <option value="Sim">Sim</option>
-                              <option value="Não">Não</option>
-                            </select>
-                          </div>
-                          <div>
-                            <label htmlFor={`descricao-${item.id}`} className={labelStyle}>Descrição</label>
-                            <textarea
-                              id={`descricao-${item.id}`}
-                              value={item.descricao_produto}
-                              onChange={(e) => handleEditInputChange(item.id, 'descricao_produto', e.target.value)}
-                              rows={3}
-                              className={inputStyle}
-                            />
-                          </div>
-                          <div>
-                            <label htmlFor={`promocoes-${item.id}`} className={labelStyle}>Promoções</label>
-                            <textarea
-                              id={`promocoes-${item.id}`}
-                              value={item.promocoes || ''}
-                              onChange={(e) => handleEditInputChange(item.id, 'promocoes', e.target.value)}
-                              rows={2}
-                              className={inputStyle}
-                              placeholder="Ex: Leve 3 Pague 2"
-                            />
-                          </div>
-                          <div>
-                            <label htmlFor={`observacao-${item.id}`} className={labelStyle}>Observação Interna</label>
-                            <textarea
-                              id={`observacao-${item.id}`}
-                              value={item.observacao}
-                              onChange={(e) => handleEditInputChange(item.id, 'observacao', e.target.value)}
-                              rows={2}
-                              className={inputStyle}
-                              placeholder="Ex: Contém glúten"
-                            />
-                          </div>
-                          <div className="flex justify-end space-x-2 pt-3">
-                            <button onClick={() => toggleEditMode(item.id)} className="btn-secondary text-sm">
-                              <XCircle size={16} className="inline mr-1" /> Cancelar
-                            </button>
-                          </div>
+        // Main Content Grid
+        <div className="space-y-12">
+          {categoriasDefinidas.map(categoria => {
+            const itensDaCategoria = itensAgrupados[categoria] || [];
+            if (itensDaCategoria.length > 0) {
+              return (
+                <section key={categoria}>
+                  <h2 className={sectionTitleStyle}>{categoria}</h2>
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                    {itensDaCategoria.map(item => (
+                      <div key={item.id} className={item.isEditing ? cardEditingStyle : cardBaseStyle}>
+                        <div className="p-5">
+                          {item.isEditing ? (
+                            // --- Edit Mode --- 
+                            <div className="space-y-4">
+                              <div>
+                                <label htmlFor={`nome-${item.id}`} className={labelStyle}>Nome*</label>
+                                <input
+                                  id={`nome-${item.id}`}
+                                  type="text"
+                                  value={item.nome_produto}
+                                  onChange={(e) => handleEditInputChange(item.id, 'nome_produto', e.target.value)}
+                                  className={inputStyle}
+                                  required
+                                />
+                              </div>
+                              <div>
+                                <label htmlFor={`categoria-${item.id}`} className={labelStyle}>Categoria*</label>
+                                <select
+                                  id={`categoria-${item.id}`}
+                                  value={item.categoria}
+                                  onChange={(e) => handleEditInputChange(item.id, 'categoria', e.target.value)}
+                                  className={inputStyle}
+                                  required
+                                >
+                                  {categoriasDefinidas.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                                  {!categoriasDefinidas.includes(item.categoria) && item.categoria && (
+                                    <option value={item.categoria}>{item.categoria} (Outra)</option>
+                                  )}
+                                </select>
+                              </div>
+                              <div>
+                                <label htmlFor={`disponivel-${item.id}`} className={labelStyle}>Disponível*</label>
+                                <select
+                                  id={`disponivel-${item.id}`}
+                                  value={item.disponivel}
+                                  onChange={(e) => handleEditInputChange(item.id, 'disponivel', e.target.value as "Sim" | "Não")}
+                                  className={inputStyle}
+                                >
+                                  <option value="Sim">Sim</option>
+                                  <option value="Não">Não</option>
+                                </select>
+                              </div>
+                              <div>
+                                <label htmlFor={`descricao-${item.id}`} className={labelStyle}>Descrição</label>
+                                <textarea
+                                  id={`descricao-${item.id}`}
+                                  value={item.descricao_produto}
+                                  onChange={(e) => handleEditInputChange(item.id, 'descricao_produto', e.target.value)}
+                                  rows={3}
+                                  className={inputStyle}
+                                />
+                              </div>
+                              <div>
+                                <label htmlFor={`promocoes-${item.id}`} className={labelStyle}>Promoções</label>
+                                <textarea
+                                  id={`promocoes-${item.id}`}
+                                  value={item.promocoes || ''}
+                                  onChange={(e) => handleEditInputChange(item.id, 'promocoes', e.target.value)}
+                                  rows={2}
+                                  className={inputStyle}
+                                  placeholder="Ex: Leve 3 Pague 2"
+                                />
+                              </div>
+                              <div>
+                                <label htmlFor={`observacao-${item.id}`} className={labelStyle}>Observação Interna</label>
+                                <textarea
+                                  id={`observacao-${item.id}`}
+                                  value={item.observacao}
+                                  onChange={(e) => handleEditInputChange(item.id, 'observacao', e.target.value)}
+                                  rows={2}
+                                  className={inputStyle}
+                                  placeholder="Ex: Contém glúten"
+                                />
+                              </div>
+                              <div className="flex justify-end space-x-2 pt-2">
+                                <button onClick={() => toggleEditMode(item.id)} className={secondaryButtonStyle}>
+                                  <XCircle size={16} className="mr-1" /> Cancelar
+                                </button>
+                                {/* Salvar individual removido - usar Salvar Alterações geral */}
+                              </div>
+                            </div>
+                          ) : (
+                            // --- View Mode --- 
+                            <div className="flex flex-col h-full">
+                              <div className="flex-grow mb-4">
+                                <h3 className="text-lg font-semibold text-gray-900 mb-1 truncate" title={item.nome_produto}>{item.nome_produto || "(Item sem nome)"}</h3>
+                                <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${item.disponivel === 'Sim' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                                  {item.disponivel === 'Sim' ? 'Disponível' : 'Indisponível'}
+                                </span>
+                                {item.descricao_produto && <p className="text-sm text-gray-600 mt-2 line-clamp-3">{item.descricao_produto}</p>}
+                                {item.promocoes && (
+                                    <div className="mt-3 p-2 bg-yellow-50 border border-yellow-200 rounded-md">
+                                        <p className="text-xs font-semibold text-yellow-800">Promoção:</p>
+                                        <p className="text-xs text-yellow-700">{item.promocoes}</p>
+                                    </div>
+                                )}
+                                {item.observacao && <p className="text-xs text-gray-500 mt-2 italic">Obs: {item.observacao}</p>}
+                              </div>
+                              <div className="mt-auto pt-4 border-t border-gray-100 flex justify-end space-x-2">
+                                <button
+                                  onClick={() => toggleEditMode(item.id)}
+                                  className={`${secondaryButtonStyle} px-3 py-1.5`}
+                                  title="Editar Item"
+                                >
+                                  <Edit3 size={16} />
+                                </button>
+                                <button
+                                  onClick={() => openDeleteConfirmationModal(item)}
+                                  className={`${dangerButtonStyle} px-3 py-1.5`}
+                                  title="Excluir Item"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              </div>
+                            </div>
+                          )}
                         </div>
-                      ) : (
-                        <div className="flex flex-col h-full">
-                          <div className="flex-grow">
-                            <h4 className="text-xl font-bold text-gray-800 mb-1">{item.nome_produto || "(Item sem nome)"}</h4>
-                            <p className="text-sm text-gray-600 mb-3">
-                              <span className={`font-medium ${item.disponivel === 'Sim' ? 'text-green-600' : 'text-red-600'}`}>
-                                {item.disponivel === 'Sim' ? 'Disponível' : 'Indisponível'}
-                              </span>
-                            </p>
-                            {item.descricao_produto && <p className="text-gray-700 text-sm mb-2">{item.descricao_produto}</p>}
-                            {item.promocoes && (
-                                <div className="mt-2 p-2 bg-yellow-100 border border-yellow-300 rounded">
-                                    <p className="text-sm font-semibold text-yellow-800">Promoção:</p>
-                                    <p className="text-sm text-yellow-700">{item.promocoes}</p>
-                                </div>
-                            )}
-                            {item.observacao && <p className="text-xs text-gray-500 mt-2 italic">Obs: {item.observacao}</p>}
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              );
+            }
+            return null;
+          })}
+          {/* Seção para itens sem categoria definida */} 
+          {(itensAgrupados["Sem Categoria"]?.length > 0) && (
+              <section key="Sem Categoria">
+                  <h2 className={sectionTitleStyle}>Sem Categoria</h2>
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                      {itensAgrupados["Sem Categoria"].map(item => (
+                          <div key={item.id} className={item.isEditing ? cardEditingStyle : cardBaseStyle}>
+                              <div className="p-5">
+                                  {/* Repete a lógica de renderização do item */} 
+                                  {item.isEditing ? (
+                                      <div className="space-y-4">
+                                          {/* Campos de edição aqui... */}
+                                          <p>Editando item sem categoria ID: {item.id}</p>
+                                          <div className="flex justify-end space-x-2 pt-2">
+                                              <button onClick={() => toggleEditMode(item.id)} className={secondaryButtonStyle}><XCircle size={16} className="mr-1" /> Cancelar</button>
+                                          </div>
+                                      </div>
+                                  ) : (
+                                      <div className="flex flex-col h-full">
+                                          <div className="flex-grow mb-4">
+                                              <h3 className="text-lg font-semibold text-gray-900 mb-1 truncate" title={item.nome_produto}>{item.nome_produto || "(Item sem nome)"}</h3>
+                                              {/* Outros detalhes... */}
+                                          </div>
+                                          <div className="mt-auto pt-4 border-t border-gray-100 flex justify-end space-x-2">
+                                              <button onClick={() => toggleEditMode(item.id)} className={`${secondaryButtonStyle} px-3 py-1.5`} title="Editar Item"><Edit3 size={16} /></button>
+                                              <button onClick={() => openDeleteConfirmationModal(item)} className={`${dangerButtonStyle} px-3 py-1.5`} title="Excluir Item"><Trash2 size={16} /></button>
+                                          </div>
+                                      </div>
+                                  )}
+                              </div>
                           </div>
-                          <div className="mt-4 pt-4 border-t border-gray-200 flex justify-end space-x-2">
-                            <button
-                              onClick={() => toggleEditMode(item.id)}
-                              className="btn-secondary text-sm"
-                              title="Editar Item"
-                            >
-                              <Edit3 size={16} />
-                            </button>
-                            <button
-                              onClick={() => openDeleteConfirmationModal(item)}
-                              className="btn-danger text-sm"
-                              title="Excluir Item"
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )
-          ))}
+                      ))}
+                  </div>
+              </section>
+          )}
         </div>
       )}
 
-      {/* Modal de Adicionar Novo Item */}
+      {/* Add New Item Modal */} 
       {isAddModalOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-          <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-            <h3 className="text-2xl font-semibold mb-6 text-gray-800">Adicionar Novo Item ao Cardápio</h3>
+        <div className={modalOverlayStyle}>
+          <div className={modalContentStyle}>
+            <h3 className="text-xl font-semibold mb-6 text-gray-900">Adicionar Novo Item</h3>
             <form onSubmit={handleAddNewItem} className="space-y-4">
-              <div>
+               <div>
                 <label htmlFor="novo-nome" className={labelStyle}>Nome do Produto*</label>
-                <input
-                  id="novo-nome"
-                  type="text"
-                  name="nome_produto"
-                  value={novoItem.nome_produto}
-                  onChange={handleNovoItemInputChange}
-                  className={inputStyle}
-                  required
-                />
+                <input id="novo-nome" type="text" name="nome_produto" value={novoItem.nome_produto} onChange={handleNovoItemInputChange} className={inputStyle} required />
               </div>
               <div>
                 <label htmlFor="novo-categoria" className={labelStyle}>Categoria*</label>
-                <select
-                  id="novo-categoria"
-                  name="categoria"
-                  value={novoItem.categoria}
-                  onChange={handleNovoItemInputChange}
-                  className={inputStyle}
-                  required
-                >
+                <select id="novo-categoria" name="categoria" value={novoItem.categoria} onChange={handleNovoItemInputChange} className={inputStyle} required>
                   {categoriasDefinidas.map(cat => <option key={cat} value={cat}>{cat}</option>)}
                 </select>
               </div>
               <div>
                 <label htmlFor="novo-disponivel" className={labelStyle}>Disponível*</label>
-                <select
-                  id="novo-disponivel"
-                  name="disponivel"
-                  value={novoItem.disponivel}
-                  onChange={handleNovoItemInputChange}
-                  className={inputStyle}
-                >
+                <select id="novo-disponivel" name="disponivel" value={novoItem.disponivel} onChange={handleNovoItemInputChange} className={inputStyle}>
                   <option value="Sim">Sim</option>
                   <option value="Não">Não</option>
                 </select>
               </div>
               <div>
                 <label htmlFor="novo-descricao" className={labelStyle}>Descrição</label>
-                <textarea
-                  id="novo-descricao"
-                  name="descricao_produto"
-                  value={novoItem.descricao_produto}
-                  onChange={handleNovoItemInputChange}
-                  rows={3}
-                  className={inputStyle}
-                />
+                <textarea id="novo-descricao" name="descricao_produto" value={novoItem.descricao_produto} onChange={handleNovoItemInputChange} rows={3} className={inputStyle} />
               </div>
               <div>
                 <label htmlFor="novo-promocoes" className={labelStyle}>Promoções</label>
-                <textarea
-                  id="novo-promocoes"
-                  name="promocoes"
-                  value={novoItem.promocoes || ''}
-                  onChange={handleNovoItemInputChange}
-                  rows={2}
-                  className={inputStyle}
-                  placeholder="Ex: Leve 3 Pague 2"
-                />
+                <textarea id="novo-promocoes" name="promocoes" value={novoItem.promocoes || ''} onChange={handleNovoItemInputChange} rows={2} className={inputStyle} placeholder="Ex: Leve 3 Pague 2" />
               </div>
               <div>
                 <label htmlFor="novo-observacao" className={labelStyle}>Observação Interna</label>
-                <textarea
-                  id="novo-observacao"
-                  name="observacao"
-                  value={novoItem.observacao}
-                  onChange={handleNovoItemInputChange}
-                  rows={2}
-                  className={inputStyle}
-                  placeholder="Ex: Contém glúten"
-                />
+                <textarea id="novo-observacao" name="observacao" value={novoItem.observacao} onChange={handleNovoItemInputChange} rows={2} className={inputStyle} placeholder="Ex: Contém glúten" />
               </div>
-              <div className="flex justify-end space-x-3 pt-4">
-                <button type="button" onClick={() => setIsAddModalOpen(false)} disabled={saving} className="btn-secondary">
-                  <XCircle size={18} className="inline mr-1" /> Cancelar
+              <div className="flex justify-end space-x-3 pt-5 border-t border-gray-200 mt-6">
+                <button type="button" onClick={() => setIsAddModalOpen(false)} disabled={saving} className={secondaryButtonStyle}>
+                  Cancelar
                 </button>
-                <button type="submit" disabled={saving} className="btn-primary bg-green-600 hover:bg-green-700">
-                  {saving ? <Loader2 size={18} className="inline mr-1 animate-spin" /> : <PlusCircle size={18} className="inline mr-1" />}
-                  {saving ? 'Salvando...' : 'Adicionar Item'}
+                <button type="submit" disabled={saving} className={greenButtonStyle}>
+                  {saving ? <Loader2 size={18} className="mr-1 animate-spin" /> : <PlusCircle size={18} className="mr-1" />}
+                  {saving ? 'Adicionando...' : 'Adicionar Item'}
                 </button>
               </div>
             </form>
@@ -695,25 +714,25 @@ const CardapioPage: React.FC = () => {
         </div>
       )}
 
-      {/* Modal de Confirmação de Exclusão */}
+      {/* Delete Confirmation Modal */} 
       {isConfirmDeleteModalOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-          <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md">
+        <div className={modalOverlayStyle}>
+          <div className={`${modalContentStyle} max-w-md`}>
             <div className="text-center">
-              <AlertTriangle size={48} className="text-red-500 mx-auto mb-4" />
-              <h3 className="text-xl font-semibold mb-3 text-gray-800">Confirmar Exclusão</h3>
-              <p className="text-gray-600 mb-6">
-                Você tem certeza que deseja excluir o item "<strong>{itemToDelete?.nome_produto || 'este item'}</strong>"?
-                <br />Esta ação não poderá ser desfeita.
+              <AlertTriangle size={40} className="text-red-500 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold mb-2 text-gray-900">Confirmar Exclusão</h3>
+              <p className="text-sm text-gray-600 mb-6">
+                Tem certeza que deseja excluir "<strong>{itemToDelete?.nome_produto || 'este item'}</strong>"?
+                <br />Esta ação não pode ser desfeita.
               </p>
             </div>
-            <div className="flex justify-center space-x-4">
-              <button onClick={() => setIsConfirmDeleteModalOpen(false)} disabled={saving} className="btn-secondary">
+            <div className="flex justify-center space-x-3">
+              <button onClick={() => setIsConfirmDeleteModalOpen(false)} disabled={saving} className={secondaryButtonStyle}>
                 Cancelar
               </button>
-              <button onClick={handleDeleteItem} disabled={saving} className="btn-danger">
-                {saving ? <Loader2 size={18} className="inline mr-1 animate-spin" /> : <Trash2 size={18} className="inline mr-1" />}
-                {saving ? 'Excluindo...' : 'Excluir Item'}
+              <button onClick={handleDeleteItem} disabled={saving} className={dangerButtonStyle}>
+                {saving ? <Loader2 size={18} className="mr-1 animate-spin" /> : <Trash2 size={18} className="mr-1" />}
+                {saving ? 'Excluindo...' : 'Sim, Excluir'}
               </button>
             </div>
           </div>

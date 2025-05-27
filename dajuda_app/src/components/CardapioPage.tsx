@@ -1,282 +1,260 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '../supabaseClient';
-import { PlusCircle, Save, XCircle, Trash2, Edit3, AlertTriangle, Loader2, Info } from 'lucide-react'; // Removed CheckCircle
+import { PlusCircle, Save, XCircle, Trash2, Edit3, AlertTriangle, Loader2 } from 'lucide-react';
 import type { RealtimeChannel } from "@supabase/supabase-js";
 
-// Interface para o item do cardápio
 export interface CardapioItem {
   id: number;
   categoria: string;
-  disponivel: "Sim" | "Não";
+  disponivel: boolean;
   nome_produto: string;
-  descricao_produto: string;
-  observacao: string;
-  promocoes?: string;
+  descricao_produto?: string | null;
+  observacao?: string | null;
+  promocoes?: string | null;
   isEditing?: boolean;
   originalNome?: string;
   originalCategoria?: string;
-  originalDisponivel?: "Sim" | "Não";
-  originalDescricao?: string;
-  originalObservacao?: string;
-  originalPromocoes?: string;
+  originalDisponivel?: boolean;
+  originalDescricao?: string | null;
+  originalObservacao?: string | null;
+  originalPromocoes?: string | null;
 }
 
-// Lista fixa de categorias
-const categoriasDefinidas = [
-  "Marmita do Dia",
-  "Marmita Clássica",
-  "Mix de Salada",
+const categoriasOrdenadas = [
+  "Marmita do dia",
+  "Marmita clássica",
+  "Mix de salada",
   "Bebida",
   "Adicional",
   "Unidade",
 ];
 
-const MAX_RETRIES = 5;
-const INITIAL_RETRY_DELAY = 5000; // 5 segundos
-
-// Type guard para verificar se um objeto tem a propriedade 'id'
-function hasId(obj: any): obj is { id: number } {
-  return typeof obj === 'object' && obj !== null && typeof obj.id === 'number';
-}
-
-// Função auxiliar para mapear dados do Supabase para o formato do estado
-const mapSupabaseItemToState = (item: any): CardapioItem => ({
-  id: item?.id || 0,
-  nome_produto: item?.nome_produto || '',
-  categoria: item?.categoria || '',
-  disponivel: item?.disponivel === 'Sim' || item?.disponivel === true ? 'Sim' : 'Não',
-  descricao_produto: item?.descricao_produto || '',
-  observacao: item?.observacao || '',
-  promocoes: item?.promocoes || '',
-});
-
-// --- Redesign Styles v2 ---
-const baseInputStyle = "block w-full text-sm rounded-md border focus:outline-none focus:ring-2 transition duration-150 ease-in-out shadow-sm"; // Slightly softer radius, added shadow
-const inputStyle = `${baseInputStyle} border-gray-300 focus:border-pink-500 focus:ring-pink-300 placeholder-gray-400 px-3 py-2`;
-const labelStyle = "block text-sm font-medium text-gray-700 mb-1.5"; // Increased bottom margin
-const baseButtonStyle = "inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 transition duration-150 ease-in-out disabled:opacity-60 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95"; // Softer radius, added transform effects
-const secondaryButtonStyle = `${baseButtonStyle} text-gray-700 bg-white border-gray-300 hover:bg-gray-50 focus:ring-pink-500`;
-const dangerButtonStyle = `${baseButtonStyle} text-white bg-red-600 hover:bg-red-700 focus:ring-red-500`;
-const greenButtonStyle = `${baseButtonStyle} text-white bg-green-600 hover:bg-green-700 focus:ring-green-500`;
-const blueButtonStyle = `${baseButtonStyle} text-white bg-blue-600 hover:bg-blue-700 focus:ring-blue-500`;
-const cardBaseStyle = "bg-white rounded-lg shadow-sm overflow-hidden transition-all duration-200 ease-in-out hover:shadow-md flex flex-col"; // Softer radius, lighter shadow, flex-col for button alignment
-const cardEditingStyle = `${cardBaseStyle} ring-2 ring-pink-400 ring-offset-1`;
-const modalOverlayStyle = "fixed inset-0 bg-gray-900 bg-opacity-60 backdrop-blur-sm flex justify-center items-center z-50 p-4";
-const modalContentStyle = "bg-white p-6 rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto"; // Softer radius
-const sectionTitleStyle = "text-xl font-semibold text-gray-800 mb-5 pb-2 border-b border-gray-200"; // Increased bottom margin
-const availabilityBadgeBase = "inline-block px-2.5 py-0.5 rounded-full text-xs font-medium"; // Slightly larger padding
-const availableBadgeStyle = `${availabilityBadgeBase} bg-green-100 text-green-800`;
-const unavailableBadgeStyle = `${availabilityBadgeBase} bg-red-100 text-red-800`;
-const promotionBoxStyle = "mt-3 p-3 bg-pink-50 border border-pink-200 rounded-md text-xs"; // New pink theme
-const saveChangesBannerStyle = "bg-blue-50 border border-blue-200 text-blue-800 px-4 py-3 rounded-lg mb-6 flex flex-col sm:flex-row justify-between items-center gap-4"; // New blue theme, removed fixed/sticky
-// --- End Redesign Styles v2 ---
-
 const CardapioPage: React.FC = () => {
   const [itensCardapio, setItensCardapio] = useState<CardapioItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
-  const [realtimeError, setRealtimeError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState<boolean>(false);
   const [isConfirmDeleteModalOpen, setIsConfirmDeleteModalOpen] = useState<boolean>(false);
   const [itemToDelete, setItemToDelete] = useState<CardapioItem | null>(null);
   const [saving, setSaving] = useState<boolean>(false);
   const cardapioChannelRef = useRef<RealtimeChannel | null>(null);
-  const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const retryCountRef = useRef<number>(0);
-  const [editingItemIds, setEditingItemIds] = useState<Set<number>>(new Set());
+  const [reconnecting, setReconnecting] = useState<boolean>(false);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectAttemptsRef = useRef<number>(0);
+  const MAX_RECONNECT_ATTEMPTS = 5;
+  const RECONNECT_DELAY = 3000; // 3 segundos
 
-  const [novoItem, setNovoItem] = useState<Omit<CardapioItem, 'id' | 'isEditing' | 'originalNome' | 'originalCategoria' | 'originalDisponivel' | 'originalDescricao' | 'originalObservacao' | 'originalPromocoes'>>({
+  const [novoItem, setNovoItem] = useState<Partial<Omit<CardapioItem, 'id'>>>({ 
     nome_produto: '',
-    categoria: categoriasDefinidas[0],
-    disponivel: "Sim",
+    categoria: categoriasOrdenadas[0],
+    disponivel: true,
     descricao_produto: '',
     observacao: '',
     promocoes: '',
   });
 
+  // Função para buscar itens do cardápio
   const fetchItensCardapio = useCallback(async (source?: string) => {
-    console.log(`[CardapioPage] Buscando itens do cardápio... (Origem: ${source || 'desconhecida'})`);
+    console.log(`Buscando itens do cardápio... (Origem: ${source || 'desconhecida'})`);
     setLoading(true);
     const { data, error: fetchError } = await supabase
       .from('Cárdapio')
-      .select('*, promocoes')
+      .select('*')
+      .order('categoria', { ascending: true })
       .order('nome_produto', { ascending: true });
 
     if (fetchError) {
-      console.error('[CardapioPage] Erro ao buscar itens do cardápio:', fetchError);
-      setRealtimeError(`Falha ao carregar cardápio: ${fetchError.message}`);
-      setItensCardapio([]);
+      console.error('Erro ao buscar itens do cardápio:', fetchError);
+      setError(`Falha ao carregar cardápio: ${fetchError.message}`);
     } else {
-      const mappedData = data.map(mapSupabaseItemToState);
-      setItensCardapio(mappedData);
+      // Garantir que todos os campos de texto sejam strings vazias em vez de null
+      setItensCardapio(data.map(item => ({ 
+        ...item,
+        nome_produto: item.nome_produto || '',
+        categoria: item.categoria || '',
+        descricao_produto: item.descricao_produto || '',
+        observacao: item.observacao || '',
+        promocoes: item.promocoes || '',
+      })) as CardapioItem[]);
+      setError(null);
     }
     setLoading(false);
   }, []);
 
-  const setupRealtimeSubscription = useCallback(() => {
+  // Função para configurar o canal Realtime
+  const setupRealtimeChannel = useCallback(() => {
     if (cardapioChannelRef.current) {
-      supabase.removeChannel(cardapioChannelRef.current).catch(console.error);
+      supabase.removeChannel(cardapioChannelRef.current)
+        .then(() => console.log('Canal Realtime (Cárdapio) removido antes de reconectar'))
+        .catch(console.error);
       cardapioChannelRef.current = null;
     }
-    if (retryTimeoutRef.current) {
-        clearTimeout(retryTimeoutRef.current);
-        retryTimeoutRef.current = null;
-    }
 
-    console.log("[CardapioPage] Tentando conectar ao canal Realtime...");
-    const channel = supabase.channel('cardapio_realtime_channel');
-
-    const handleRealtimeChange = (payload: any) => {
-        console.log("[CardapioPage] Mudança Realtime recebida:", payload);
-        if (typeof payload.eventType !== 'string') {
-            console.warn("[CardapioPage] Evento Realtime sem eventType válido:", payload);
-            return;
+    const handleCardapioChanges = (payload: any) => {
+      console.log("Mudança recebida do Supabase Realtime (Cárdapio)!", payload);
+      
+      // Verificar se há itens em edição antes de atualizar
+      const hasEditingItems = itensCardapio.some(item => item.isEditing);
+      
+      if (hasEditingItems) {
+        // Se houver itens em edição, apenas atualize os itens que não estão sendo editados
+        if (payload.eventType === 'INSERT') {
+          // Para inserções, adicione o novo item
+          const newItem = payload.new;
+          if (newItem && newItem.id) {
+            setItensCardapio(prevItems => {
+              // Verificar se o item já existe
+              if (!prevItems.some(item => item.id === newItem.id)) {
+                return [...prevItems, {
+                  ...newItem,
+                  nome_produto: newItem.nome_produto || '',
+                  categoria: newItem.categoria || '',
+                  descricao_produto: newItem.descricao_produto || '',
+                  observacao: newItem.observacao || '',
+                  promocoes: newItem.promocoes || '',
+                }];
+              }
+              return prevItems;
+            });
+          }
+        } else if (payload.eventType === 'DELETE') {
+          // Para exclusões, remova o item se não estiver sendo editado
+          const oldItem = payload.old;
+          if (oldItem && oldItem.id) {
+            setItensCardapio(prevItems => 
+              prevItems.filter(item => 
+                item.id !== oldItem.id || item.isEditing
+              )
+            );
+          }
+        } else if (payload.eventType === 'UPDATE') {
+          // Para atualizações, atualize apenas se o item não estiver sendo editado
+          const updatedItem = payload.new;
+          if (updatedItem && updatedItem.id) {
+            setItensCardapio(prevItems => 
+              prevItems.map(item => {
+                if (item.id === updatedItem.id && !item.isEditing) {
+                  return {
+                    ...updatedItem,
+                    nome_produto: updatedItem.nome_produto || '',
+                    categoria: updatedItem.categoria || '',
+                    descricao_produto: updatedItem.descricao_produto || '',
+                    observacao: updatedItem.observacao || '',
+                    promocoes: updatedItem.promocoes || '',
+                  };
+                }
+                return item;
+              })
+            );
+          }
         }
-
-        setItensCardapio(currentItems => {
-            let updatedItems = [...currentItems];
-            let recordId: number | undefined = undefined;
-            if (hasId(payload.new)) {
-                recordId = payload.new.id;
-            } else if (hasId(payload.old)) {
-                recordId = payload.old.id;
-            }
-
-            if (recordId === undefined) {
-                console.warn("[CardapioPage] Evento Realtime sem ID identificável:", payload);
-                return currentItems;
-            }
-
-            switch (payload.eventType) {
-                case 'INSERT':
-                    if (!updatedItems.some(item => item.id === recordId)) {
-                        updatedItems.push(mapSupabaseItemToState(payload.new));
-                        console.log(`[CardapioPage] Item ${recordId} inserido via Realtime.`);
-                    }
-                    break;
-                case 'UPDATE':
-                    const isLocallyEditing = editingItemIds.has(recordId);
-                    if (isLocallyEditing) {
-                        console.log(`[CardapioPage] Item ${recordId} ignorado na atualização Realtime (está em edição local).`);
-                    } else {
-                        updatedItems = updatedItems.map(item => {
-                            if (item.id === recordId) {
-                                console.log(`[CardapioPage] Item ${recordId} atualizado via Realtime.`);
-                                return mapSupabaseItemToState(payload.new);
-                            }
-                            return item;
-                        });
-                    }
-                    break;
-                case 'DELETE':
-                    updatedItems = updatedItems.filter(item => item.id !== recordId);
-                    console.log(`[CardapioPage] Item ${recordId} removido via Realtime.`);
-                    if (editingItemIds.has(recordId)) {
-                        setEditingItemIds(prevIds => {
-                            const newIds = new Set(prevIds);
-                            newIds.delete(recordId!);
-                            return newIds;
-                        });
-                    }
-                    break;
-                default:
-                    console.log("[CardapioPage] Evento Realtime não tratado:", payload.eventType);
-            }
-            updatedItems.sort((a, b) => (a.nome_produto || '').localeCompare(b.nome_produto || ''));
-            return updatedItems;
-        });
+      } else {
+        // Se não houver itens em edição, busque todos os itens novamente
+        fetchItensCardapio('realtime update');
+      }
     };
 
-    channel.on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'Cárdapio' },
-      handleRealtimeChange
-    ).subscribe((status: "SUBSCRIBED" | "TIMED_OUT" | "CLOSED" | "CHANNEL_ERROR", err?: Error) => {
-      if (status === 'SUBSCRIBED') {
-        console.log('[CardapioPage] Conectado ao canal Realtime!');
-        setRealtimeError(null);
-        retryCountRef.current = 0;
-        if (retryTimeoutRef.current) {
-            clearTimeout(retryTimeoutRef.current);
-            retryTimeoutRef.current = null;
+    cardapioChannelRef.current = supabase
+      .channel('cardapio_realtime_channel')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'Cárdapio' },
+        handleCardapioChanges
+      )
+      .subscribe((status, err) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('Conectado ao canal Realtime do Cardapio!');
+          setError(null);
+          setReconnecting(false);
+          reconnectAttemptsRef.current = 0;
+        } else if (status === 'CHANNEL_ERROR') {
+          console.error('Erro no canal Realtime do Cardapio:', err);
+          handleReconnect(err?.message || 'Erro desconhecido');
+        } else if (status === 'TIMED_OUT') {
+          console.warn('Timeout na conexão Realtime do Cardapio.');
+          handleReconnect('Timeout');
+        } else if (status === 'CLOSED'){
+          console.log('Canal Realtime (Cárdapio) fechado.');
+          handleReconnect('CLOSED');
         }
-        fetchItensCardapio('after subscribe');
-      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-        console.error(`[CardapioPage] Erro/Status no canal Realtime: ${status}`, err);
-        cardapioChannelRef.current = null;
-        if (!retryTimeoutRef.current || status === 'CHANNEL_ERROR') {
-            const baseMessage = `Erro de conexão em tempo real (Cardápio): ${status}`;
-            const errorMessage = err ? `${baseMessage} - ${err.message}` : baseMessage;
-            if (retryCountRef.current >= MAX_RETRIES) {
-                console.error("[CardapioPage] Máximo de tentativas de reconexão atingido.");
-                setRealtimeError("Falha ao reconectar ao serviço de atualizações em tempo real (Cardápio) após múltiplas tentativas. Atualize manualmente.");
-            } else {
-                setRealtimeError(`${errorMessage}. Tentando reconectar...`);
-                const delay = INITIAL_RETRY_DELAY * Math.pow(2, retryCountRef.current);
-                console.log(`[CardapioPage] Tentando reconectar em ${delay / 1000} segundos... (Tentativa ${retryCountRef.current + 1}/${MAX_RETRIES})`);
-                retryTimeoutRef.current = setTimeout(() => {
-                    retryCountRef.current++;
-                    retryTimeoutRef.current = null;
-                    setupRealtimeSubscription();
-                }, delay);
-            }
-        } else {
-            console.log(`[CardapioPage] Status ${status} recebido, mas já existe uma tentativa de reconexão em andamento.`);
-        }
-      }
-    });
-    cardapioChannelRef.current = channel;
-  }, [fetchItensCardapio, editingItemIds]);
+      });
+  }, [fetchItensCardapio, itensCardapio]);
 
+  // Função para gerenciar reconexões
+  const handleReconnect = useCallback((errorMessage: string) => {
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+    }
+
+    if (reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
+      reconnectAttemptsRef.current += 1;
+      setReconnecting(true);
+      setError(`Erro de conexão em tempo real (Cardápio): ${errorMessage} - Tentando reconectar...`);
+      
+      reconnectTimeoutRef.current = setTimeout(() => {
+        console.log(`Tentativa de reconexão ${reconnectAttemptsRef.current}/${MAX_RECONNECT_ATTEMPTS}...`);
+        setupRealtimeChannel();
+      }, RECONNECT_DELAY);
+    } else {
+      setReconnecting(false);
+      setError(`Erro de conexão em tempo real (Cardápio): ${errorMessage} - Falha após ${MAX_RECONNECT_ATTEMPTS} tentativas. Atualize a página.`);
+    }
+  }, [setupRealtimeChannel]);
+
+  // Efeito para inicializar o canal Realtime
   useEffect(() => {
     fetchItensCardapio('initial mount');
-    setupRealtimeSubscription();
+    setupRealtimeChannel();
+
     return () => {
-      console.log("[CardapioPage] Desmontando componente e removendo canal Realtime.");
-      if (retryTimeoutRef.current) {
-        clearTimeout(retryTimeoutRef.current);
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
       }
+      
       if (cardapioChannelRef.current) {
         supabase.removeChannel(cardapioChannelRef.current)
-          .then(status => console.log('[CardapioPage] Canal Realtime removido no cleanup, status:', status))
+          .then(status => console.log('Canal Realtime (Cárdapio) removido, status:', status))
           .catch(console.error);
         cardapioChannelRef.current = null;
       }
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fetchItensCardapio]);
+  }, [fetchItensCardapio, setupRealtimeChannel]);
 
   const handleNovoItemInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
-    if (name === "disponivel") {
-      setNovoItem(prev => ({ ...prev, disponivel: value as "Sim" | "Não" }));
-    } else {
-      setNovoItem(prev => ({ ...prev, [name]: value }));
-    }
+    setNovoItem(prev => ({ ...prev, [name]: value }));
+  };
+  
+  const handleNovoItemDisponivelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setNovoItem(prev => ({ ...prev, disponivel: e.target.value === 'Sim' }));
   };
 
   const handleAddNewItem = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!novoItem.nome_produto.trim() || !novoItem.categoria.trim()) {
-      alert('Nome do produto e categoria são obrigatórios e não podem estar vazios.');
+    if (!novoItem.nome_produto || !novoItem.categoria) {
+      alert('Nome do produto e categoria são obrigatórios.');
       return;
     }
     setSaving(true);
-    let novoId = 1;
-    if (itensCardapio.length > 0) {
-      novoId = Math.max(...itensCardapio.map(item => item.id)) + 1;
-    }
+    
+    // Encontrar o maior ID atual e incrementar
+    const maxId = itensCardapio.reduce((max, item) => Math.max(max, item.id), 0);
+    const nextId = maxId + 1;
+    
     const itemParaSalvar = {
-        id: novoId,
-        nome_produto: novoItem.nome_produto.trim(),
-        categoria: novoItem.categoria.trim(),
-        disponivel: novoItem.disponivel,
-        descricao_produto: novoItem.descricao_produto.trim() === '' ? null : novoItem.descricao_produto.trim(),
-        observacao: novoItem.observacao.trim() === '' ? null : novoItem.observacao.trim(),
-        promocoes: novoItem.promocoes?.trim() === '' ? null : novoItem.promocoes?.trim(),
+        id: nextId,
+        nome_produto: novoItem.nome_produto,
+        categoria: novoItem.categoria,
+        disponivel: novoItem.disponivel ? 'Sim' : 'Não', // Usar 'Sim'/'Não' para o enum
+        descricao_produto: novoItem.descricao_produto || null,
+        observacao: novoItem.observacao || null,
+        promocoes: novoItem.promocoes || null,
     };
+    
     const { error: insertError } = await supabase
       .from('Cárdapio')
       .insert([itemParaSalvar]);
+      
     setSaving(false);
     if (insertError) {
       console.error('Erro ao adicionar novo item:', insertError);
@@ -284,10 +262,10 @@ const CardapioPage: React.FC = () => {
     } else {
       alert('Novo item adicionado com sucesso!');
       setIsAddModalOpen(false);
-      setNovoItem({
+      setNovoItem({ 
         nome_produto: '',
-        categoria: categoriasDefinidas[0],
-        disponivel: "Sim",
+        categoria: categoriasOrdenadas[0],
+        disponivel: true,
         descricao_produto: '',
         observacao: '',
         promocoes: '',
@@ -315,11 +293,6 @@ const CardapioPage: React.FC = () => {
       alert(`Item "${itemToDelete.nome_produto}" removido com sucesso!`);
       setIsConfirmDeleteModalOpen(false);
       setItemToDelete(null);
-      setEditingItemIds(prevIds => {
-          const newIds = new Set(prevIds);
-          newIds.delete(itemToDelete.id);
-          return newIds;
-      });
     }
   };
 
@@ -328,7 +301,6 @@ const CardapioPage: React.FC = () => {
       prevItens.map(item => {
         if (item.id === itemId) {
           if (!item.isEditing) {
-            setEditingItemIds(prevIds => new Set(prevIds).add(itemId));
             return {
               ...item,
               isEditing: true,
@@ -340,26 +312,15 @@ const CardapioPage: React.FC = () => {
               originalPromocoes: item.promocoes,
             };
           } else {
-            setEditingItemIds(prevIds => {
-                const newIds = new Set(prevIds);
-                newIds.delete(itemId);
-                return newIds;
-            });
             return {
               ...item,
               isEditing: false,
-              nome_produto: item.originalNome !== undefined ? item.originalNome : item.nome_produto,
-              categoria: item.originalCategoria !== undefined ? item.originalCategoria : item.categoria,
-              disponivel: item.originalDisponivel !== undefined ? item.originalDisponivel : item.disponivel,
+              nome_produto: item.originalNome || item.nome_produto,
+              categoria: item.originalCategoria || item.categoria,
+              disponivel: typeof item.originalDisponivel === 'boolean' ? item.originalDisponivel : item.disponivel,
               descricao_produto: item.originalDescricao !== undefined ? item.originalDescricao : item.descricao_produto,
               observacao: item.originalObservacao !== undefined ? item.originalObservacao : item.observacao,
               promocoes: item.originalPromocoes !== undefined ? item.originalPromocoes : item.promocoes,
-              originalNome: undefined,
-              originalCategoria: undefined,
-              originalDisponivel: undefined,
-              originalDescricao: undefined,
-              originalObservacao: undefined,
-              originalPromocoes: undefined,
             };
           }
         }
@@ -368,7 +329,7 @@ const CardapioPage: React.FC = () => {
     );
   };
 
-  const handleEditInputChange = (itemId: number, field: keyof Omit<CardapioItem, 'id'>, value: any) => {
+  const handleEditInputChange = (itemId: number, field: keyof CardapioItem, value: any) => {
     setItensCardapio(prevItens =>
       prevItens.map(item =>
         item.id === itemId ? { ...item, [field]: value } : item
@@ -376,348 +337,236 @@ const CardapioPage: React.FC = () => {
     );
   };
 
+  const itemsComAlteracoes = useMemo(() => {
+    return itensCardapio.filter(item => 
+      item.isEditing && 
+      (item.nome_produto !== item.originalNome ||
+       item.categoria !== item.originalCategoria ||
+       item.disponivel !== item.originalDisponivel ||
+       item.descricao_produto !== item.originalDescricao ||
+       item.observacao !== item.originalObservacao ||
+       item.promocoes !== item.originalPromocoes)
+    );
+  }, [itensCardapio]);
+
   const handleSaveAllChanges = async () => {
-    const itensParaSalvar = itensCardapio.filter(item => editingItemIds.has(item.id));
-    if (itensParaSalvar.length === 0) {
+    if (itemsComAlteracoes.length === 0) {
       alert("Nenhuma alteração para salvar.");
       return;
     }
-    const itensInvalidos = itensParaSalvar.filter(item => !item.nome_produto.trim() || !item.categoria.trim());
-    if (itensInvalidos.length > 0) {
-        alert(`Os seguintes itens não podem ser salvos porque o nome do produto e a categoria são obrigatórios: IDs ${itensInvalidos.map(i => i.id).join(', ')}`);
-        return;
-    }
     setSaving(true);
-    const updates = itensParaSalvar.map(item => {
+    const updates = itemsComAlteracoes.map(item => {
       const { id, nome_produto, categoria, disponivel, descricao_produto, observacao, promocoes } = item;
       return supabase
         .from('Cárdapio')
-        .update({
-            nome_produto: nome_produto.trim(),
-            categoria: categoria.trim(),
-            disponivel,
-            descricao_produto: descricao_produto.trim() === '' ? null : descricao_produto.trim(),
-            observacao: observacao.trim() === '' ? null : observacao.trim(),
-            promocoes: promocoes?.trim() === '' ? null : promocoes?.trim(),
+        .update({ 
+          nome_produto, 
+          categoria, 
+          disponivel: disponivel ? 'Sim' : 'Não', // Usar 'Sim'/'Não' para o enum
+          descricao_produto, 
+          observacao,
+          promocoes
         })
         .match({ id });
     });
-    const results = await Promise.all(updates);
-    setSaving(false);
-    const erros = results.filter(result => result.error);
-    if (erros.length > 0) {
-      console.error("Erros ao salvar alterações:", erros);
-      alert(`Houve ${erros.length} erro(s) ao salvar. Verifique o console.`);
-    } else {
-      alert("Todas as alterações foram salvas com sucesso!");
-      const savedIds = new Set(itensParaSalvar.map(item => item.id));
-      setItensCardapio(prevItens =>
-        prevItens.map(item =>
-          savedIds.has(item.id)
-            ? { ...item, isEditing: false, originalNome: undefined, originalCategoria: undefined, originalDisponivel: undefined, originalDescricao: undefined, originalObservacao: undefined, originalPromocoes: undefined }
-            : item
-        )
-      );
-      setEditingItemIds(prevIds => {
-          const newIds = new Set(prevIds);
-          savedIds.forEach(id => newIds.delete(id));
-          return newIds;
-      });
+
+    try {
+      const results = await Promise.all(updates);
+      const errors = results.filter(result => result.error);
+      if (errors.length > 0) {
+        console.error("Erros ao salvar alterações:", errors);
+        alert(`Houve ${errors.length} erro(s) ao salvar. Verifique o console.`);
+      } else {
+        alert("Todas as alterações foram salvas com sucesso!");
+        setItensCardapio(prev => prev.map(item => ({...item, isEditing: false})));
+      }
+    } catch (e) {
+      console.error("Erro geral ao salvar alterações:", e);
+      alert("Ocorreu um erro inesperado ao salvar as alterações.");
     }
+    setSaving(false);
   };
 
-  const itensAgrupados = useMemo(() => {
-    const grupos: { [key: string]: CardapioItem[] } = {};
-    categoriasDefinidas.forEach(cat => grupos[cat] = []);
-    itensCardapio.forEach(item => {
-      const categoria = item.categoria || "Sem Categoria";
-      if (!grupos[categoria]) {
-        grupos[categoria] = [];
-      }
-      grupos[categoria].push(item);
-    });
-    Object.keys(grupos).forEach(categoria => {
-      grupos[categoria].sort((a, b) => (a.nome_produto || '').localeCompare(b.nome_produto || ''));
-    });
-    return grupos;
-  }, [itensCardapio]);
+  if (loading && itensCardapio.length === 0) {
+    return <div className="text-center p-10"><p className="text-xl text-gray-600">Carregando cardápio...</p></div>;
+  }
+
+  if (error && itensCardapio.length === 0) {
+    return (
+      <div className="text-center p-10">
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg shadow-sm">
+          <p className="text-xl">{error}</p>
+          {reconnecting && (
+            <div className="mt-2 flex items-center justify-center">
+              <Loader2 size={20} className="animate-spin mr-2" />
+              <span>Tentando reconectar...</span>
+            </div>
+          )}
+          {!reconnecting && reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS && (
+            <button 
+              onClick={() => {
+                reconnectAttemptsRef.current = 0;
+                setupRealtimeChannel();
+              }}
+              className="mt-3 bg-red-600 hover:bg-red-700 text-white font-medium py-2 px-4 rounded-lg transition-colors"
+            >
+              Tentar Novamente
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Organizar itens por categoria na ordem especificada
+  const categoriasMapeadas: Record<string, CardapioItem[]> = {};
+  
+  // Inicializar todas as categorias ordenadas, mesmo que vazias
+  categoriasOrdenadas.forEach(categoria => {
+    categoriasMapeadas[categoria] = [];
+  });
+  
+  // Preencher com os itens existentes
+  itensCardapio.forEach(item => {
+    const categoria = item.categoria || 'Sem Categoria';
+    if (!categoriasMapeadas[categoria]) {
+      categoriasMapeadas[categoria] = [];
+    }
+    categoriasMapeadas[categoria].push(item);
+  });
 
   return (
-    <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-center mb-8 pb-4 border-b border-gray-200">
-        <h1 className="text-2xl font-semibold text-gray-900 mb-4 sm:mb-0">Cardápio</h1>
+    <div className="container mx-auto p-4 pb-20">
+      {error && itensCardapio.length > 0 && (
+         <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg shadow-sm flex items-center justify-center">
+            <AlertTriangle size={20} className="mr-2" /> 
+            <span>{error}</span>
+            {reconnecting && <Loader2 size={20} className="animate-spin ml-2" />}
+         </div>
+      )}
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-3xl font-semibold text-gray-700">Itens do Cardápio</h2>
         <button
           onClick={() => setIsAddModalOpen(true)}
-          className={greenButtonStyle}
+          className="bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md flex items-center transition-colors duration-150"
         >
-          <PlusCircle size={18} className="mr-2" /> Adicionar Item
+          <PlusCircle size={20} className="mr-2" />
+          Adicionar Novo Item
         </button>
       </div>
 
-      {/* Realtime Error Banner */}
-      {realtimeError && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg relative mb-6 flex items-center" role="alert">
-          <AlertTriangle size={20} className="text-red-500 mr-3 flex-shrink-0" />
-          <div>
-            <strong className="font-semibold">Erro de Conexão: </strong>
-            <span className="block sm:inline text-sm">{realtimeError}</span>
-          </div>
+      {itemsComAlteracoes.length > 0 && (
+        <div className="sticky top-4 z-40 mb-4">
+            <div className="bg-blue-50 border border-blue-200 text-blue-800 p-4 rounded-lg shadow-md flex justify-between items-center">
+                <div className="flex items-center">
+                    <AlertTriangle size={20} className="mr-2" />
+                    <span>Você tem {itemsComAlteracoes.length} item(ns) com alterações não salvas.</span>
+                </div>
+                <button
+                    onClick={handleSaveAllChanges}
+                    disabled={saving}
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow flex items-center transition-all duration-150"
+                >
+                    {saving ? <Loader2 size={18} className="animate-spin mr-2" /> : <Save size={18} className="mr-2" />}
+                    {saving ? 'Salvando...' : 'Salvar Alterações'}
+                </button>
+            </div>
         </div>
       )}
 
-      {/* Save Changes Banner - Now scrolls with page */}
-      {editingItemIds.size > 0 && (
-        <div className={saveChangesBannerStyle}>
-          <div className="flex items-center">
-             <Info size={20} className="text-blue-600 mr-3 flex-shrink-0" /> {/* Changed icon */}
-             <div>
-                <p className="font-semibold">Você tem {editingItemIds.size} item(ns) em edição.</p>
-                <p className="text-sm">Salve as alterações para aplicá-las.</p>
-             </div>
-          </div>
-          <button
-            onClick={handleSaveAllChanges}
-            disabled={saving}
-            className={blueButtonStyle}
-          >
-            {saving ? <Loader2 size={18} className="mr-1 animate-spin" /> : <Save size={18} className="mr-1" />}
-            {saving ? 'Salvando...' : 'Salvar Alterações'}
-          </button>
-        </div>
-      )}
-
-      {/* Loading State */}
-      {loading ? (
-        <div className="text-center py-16">
-          <Loader2 size={32} className="animate-spin text-pink-600 mx-auto" />
-          <p className="mt-3 text-sm text-gray-500">Carregando cardápio...</p>
-        </div>
-      ) : (
-        // Main Content Grid
-        <div className="space-y-12">
-          {categoriasDefinidas.map(categoria => {
-            const itensDaCategoria = itensAgrupados[categoria] || [];
-            if (itensDaCategoria.length > 0) {
-              return (
-                <section key={categoria}>
-                  <h2 className={sectionTitleStyle}>{categoria}</h2>
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                    {itensDaCategoria.map(item => (
-                      <div key={item.id} className={item.isEditing ? cardEditingStyle : cardBaseStyle}>
-                        {/* Card Content - View Mode */}
-                        {!item.isEditing && (
-                          <div className="p-5 flex flex-col flex-grow"> {/* Added flex-grow */}
-                            <div className="flex-grow mb-4"> {/* Content grows */}
-                              <h3 className="text-lg font-semibold text-gray-900 mb-1.5 truncate" title={item.nome_produto}>{item.nome_produto || "(Item sem nome)"}</h3>
-                              <span className={item.disponivel === 'Sim' ? availableBadgeStyle : unavailableBadgeStyle}>
-                                {item.disponivel === 'Sim' ? 'Disponível' : 'Indisponível'}
-                              </span>
-                              {item.descricao_produto && <p className="text-sm text-gray-600 mt-2.5 line-clamp-3">{item.descricao_produto}</p>}
-                              {item.promocoes && (
-                                  <div className={promotionBoxStyle}>
-                                      <p className="font-semibold text-pink-800">Promoção:</p>
-                                      <p className="text-pink-700">{item.promocoes}</p>
-                                  </div>
-                              )}
-                              {item.observacao && <p className="text-xs text-gray-500 mt-2.5 italic">Obs: {item.observacao}</p>}
-                            </div>
-                            {/* Buttons aligned to bottom */}
-                            <div className="mt-auto pt-4 border-t border-gray-100 flex justify-end space-x-2"> {/* Added mt-auto */}
-                              <button
-                                onClick={() => toggleEditMode(item.id)}
-                                className={`${secondaryButtonStyle} px-3 py-1.5`}
-                                title="Editar Item"
-                              >
-                                <Edit3 size={16} />
-                              </button>
-                              <button
-                                onClick={() => openDeleteConfirmationModal(item)}
-                                className={`${dangerButtonStyle} px-3 py-1.5`}
-                                title="Excluir Item"
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                        {/* Card Content - Edit Mode */}
-                        {item.isEditing && (
-                          <div className="p-5">
-                            <div className="space-y-4">
-                              <div>
-                                <label htmlFor={`nome-${item.id}`} className={labelStyle}>Nome*</label>
-                                <input
-                                  id={`nome-${item.id}`}
-                                  type="text"
-                                  value={item.nome_produto}
-                                  onChange={(e) => handleEditInputChange(item.id, 'nome_produto', e.target.value)}
-                                  className={inputStyle}
-                                  required
-                                />
-                              </div>
-                              <div>
-                                <label htmlFor={`categoria-${item.id}`} className={labelStyle}>Categoria*</label>
-                                <select
-                                  id={`categoria-${item.id}`}
-                                  value={item.categoria}
-                                  onChange={(e) => handleEditInputChange(item.id, 'categoria', e.target.value)}
-                                  className={inputStyle}
-                                  required
-                                >
-                                  {categoriasDefinidas.map(cat => <option key={cat} value={cat}>{cat}</option>)}
-                                  {!categoriasDefinidas.includes(item.categoria) && item.categoria && (
-                                    <option value={item.categoria}>{item.categoria} (Outra)</option>
-                                  )}
-                                </select>
-                              </div>
-                              <div>
-                                <label htmlFor={`disponivel-${item.id}`} className={labelStyle}>Disponível*</label>
-                                <select
-                                  id={`disponivel-${item.id}`}
-                                  value={item.disponivel}
-                                  onChange={(e) => handleEditInputChange(item.id, 'disponivel', e.target.value as "Sim" | "Não")}
-                                  className={inputStyle}
-                                >
-                                  <option value="Sim">Sim</option>
-                                  <option value="Não">Não</option>
-                                </select>
-                              </div>
-                              <div>
-                                <label htmlFor={`descricao-${item.id}`} className={labelStyle}>Descrição</label>
-                                <textarea
-                                  id={`descricao-${item.id}`}
-                                  value={item.descricao_produto}
-                                  onChange={(e) => handleEditInputChange(item.id, 'descricao_produto', e.target.value)}
-                                  rows={3}
-                                  className={inputStyle}
-                                />
-                              </div>
-                              <div>
-                                <label htmlFor={`promocoes-${item.id}`} className={labelStyle}>Promoções</label>
-                                <textarea
-                                  id={`promocoes-${item.id}`}
-                                  value={item.promocoes || ''}
-                                  onChange={(e) => handleEditInputChange(item.id, 'promocoes', e.target.value)}
-                                  rows={2}
-                                  className={inputStyle}
-                                  placeholder="Ex: Leve 3 Pague 2"
-                                />
-                              </div>
-                              <div>
-                                <label htmlFor={`observacao-${item.id}`} className={labelStyle}>Observação Interna</label>
-                                <textarea
-                                  id={`observacao-${item.id}`}
-                                  value={item.observacao}
-                                  onChange={(e) => handleEditInputChange(item.id, 'observacao', e.target.value)}
-                                  rows={2}
-                                  className={inputStyle}
-                                  placeholder="Ex: Contém glúten"
-                                />
-                              </div>
-                              <div className="flex justify-end space-x-2 pt-2">
-                                <button onClick={() => toggleEditMode(item.id)} className={secondaryButtonStyle}>
-                                  <XCircle size={16} className="mr-1" /> Cancelar
-                                </button>
-                                {/* Salvar individual removido - usar Salvar Alterações geral */}
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              );
-            }
-            return null;
-          })}
-          {/* Seção para itens sem categoria definida */} 
-          {(itensAgrupados["Sem Categoria"]?.length > 0) && (
-              <section key="Sem Categoria">
-                  <h2 className={sectionTitleStyle}>Sem Categoria</h2>
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                      {itensAgrupados["Sem Categoria"].map(item => (
-                          <div key={item.id} className={item.isEditing ? cardEditingStyle : cardBaseStyle}>
-                             {/* Repete a lógica de renderização do item - View Mode */}
-                            {!item.isEditing && (
-                              <div className="p-5 flex flex-col flex-grow"> {/* Added flex-grow */}
-                                <div className="flex-grow mb-4"> {/* Content grows */}
-                                  <h3 className="text-lg font-semibold text-gray-900 mb-1.5 truncate" title={item.nome_produto}>{item.nome_produto || "(Item sem nome)"}</h3>
-                                  <span className={item.disponivel === 'Sim' ? availableBadgeStyle : unavailableBadgeStyle}>
-                                    {item.disponivel === 'Sim' ? 'Disponível' : 'Indisponível'}
-                                  </span>
-                                  {/* Outros detalhes... */}
-                                </div>
-                                {/* Buttons aligned to bottom */}
-                                <div className="mt-auto pt-4 border-t border-gray-100 flex justify-end space-x-2"> {/* Added mt-auto */}
-                                  <button onClick={() => toggleEditMode(item.id)} className={`${secondaryButtonStyle} px-3 py-1.5`} title="Editar Item"><Edit3 size={16} /></button>
-                                  <button onClick={() => openDeleteConfirmationModal(item)} className={`${dangerButtonStyle} px-3 py-1.5`} title="Excluir Item"><Trash2 size={16} /></button>
-                                </div>
-                              </div>
-                            )}
-                            {/* Repete a lógica de renderização do item - Edit Mode */}
-                            {item.isEditing && (
-                              <div className="p-5">
-                                <div className="space-y-4">
-                                  {/* Campos de edição aqui... */}
-                                  <p>Editando item sem categoria ID: {item.id}</p>
-                                  <div className="flex justify-end space-x-2 pt-2">
-                                    <button onClick={() => toggleEditMode(item.id)} className={secondaryButtonStyle}><XCircle size={16} className="mr-1" /> Cancelar</button>
-                                  </div>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                      ))}
-                  </div>
-              </section>
-          )}
-        </div>
-      )}
-
-      {/* Add New Item Modal */} 
       {isAddModalOpen && (
-        <div className={modalOverlayStyle}>
-          <div className={modalContentStyle}>
-            <h3 className="text-xl font-semibold mb-6 text-gray-900">Adicionar Novo Item</h3>
-            <form onSubmit={handleAddNewItem} className="space-y-4">
-               <div>
-                <label htmlFor="novo-nome" className={labelStyle}>Nome do Produto*</label>
-                <input id="novo-nome" type="text" name="nome_produto" value={novoItem.nome_produto} onChange={handleNovoItemInputChange} className={inputStyle} required />
+        <div className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+          <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <h3 className="text-2xl font-semibold mb-6 text-gray-800 text-center">Adicionar Novo Item ao Cardápio</h3>
+            <form onSubmit={handleAddNewItem}>
+              <div className="mb-4">
+                <label htmlFor="nome_produto_novo" className="block text-sm font-medium text-gray-700 mb-1">Nome do Produto</label>
+                <input 
+                  type="text" 
+                  name="nome_produto" 
+                  id="nome_produto_novo" 
+                  value={novoItem.nome_produto || ''} 
+                  onChange={handleNovoItemInputChange} 
+                  required 
+                  className="w-full p-2.5 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-500 focus:border-pink-500 transition-colors" 
+                />
               </div>
-              <div>
-                <label htmlFor="novo-categoria" className={labelStyle}>Categoria*</label>
-                <select id="novo-categoria" name="categoria" value={novoItem.categoria} onChange={handleNovoItemInputChange} className={inputStyle} required>
-                  {categoriasDefinidas.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+              <div className="mb-4">
+                <label htmlFor="categoria_novo" className="block text-sm font-medium text-gray-700 mb-1">Categoria</label>
+                <select 
+                  name="categoria" 
+                  id="categoria_novo" 
+                  value={novoItem.categoria} 
+                  onChange={handleNovoItemInputChange} 
+                  required 
+                  className="w-full p-2.5 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-500 focus:border-pink-500 transition-colors"
+                >
+                  {categoriasOrdenadas.map(cat => (<option key={cat} value={cat}>{cat}</option>))}
                 </select>
               </div>
-              <div>
-                <label htmlFor="novo-disponivel" className={labelStyle}>Disponível*</label>
-                <select id="novo-disponivel" name="disponivel" value={novoItem.disponivel} onChange={handleNovoItemInputChange} className={inputStyle}>
+              <div className="mb-4">
+                <label htmlFor="disponivel_novo" className="block text-sm font-medium text-gray-700 mb-1">Disponível</label>
+                <select 
+                  name="disponivel" 
+                  id="disponivel_novo" 
+                  value={novoItem.disponivel ? 'Sim' : 'Não'} 
+                  onChange={handleNovoItemDisponivelChange} 
+                  required 
+                  className="w-full p-2.5 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-500 focus:border-pink-500 transition-colors"
+                >
                   <option value="Sim">Sim</option>
                   <option value="Não">Não</option>
                 </select>
               </div>
-              <div>
-                <label htmlFor="novo-descricao" className={labelStyle}>Descrição</label>
-                <textarea id="novo-descricao" name="descricao_produto" value={novoItem.descricao_produto} onChange={handleNovoItemInputChange} rows={3} className={inputStyle} />
+              <div className="mb-4">
+                <label htmlFor="descricao_produto_novo" className="block text-sm font-medium text-gray-700 mb-1">Descrição</label>
+                <textarea 
+                  name="descricao_produto" 
+                  id="descricao_produto_novo" 
+                  value={novoItem.descricao_produto || ''} 
+                  onChange={handleNovoItemInputChange} 
+                  rows={3} 
+                  className="w-full p-2.5 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-500 focus:border-pink-500 transition-colors"
+                />
               </div>
-              <div>
-                <label htmlFor="novo-promocoes" className={labelStyle}>Promoções</label>
-                <textarea id="novo-promocoes" name="promocoes" value={novoItem.promocoes || ''} onChange={handleNovoItemInputChange} rows={2} className={inputStyle} placeholder="Ex: Leve 3 Pague 2" />
+              <div className="mb-4">
+                <label htmlFor="promocoes_novo" className="block text-sm font-medium text-gray-700 mb-1">Promoções</label>
+                <textarea 
+                  name="promocoes" 
+                  id="promocoes_novo" 
+                  value={novoItem.promocoes || ''} 
+                  onChange={handleNovoItemInputChange} 
+                  rows={2} 
+                  className="w-full p-2.5 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-500 focus:border-pink-500 transition-colors"
+                />
               </div>
-              <div>
-                <label htmlFor="novo-observacao" className={labelStyle}>Observação Interna</label>
-                <textarea id="novo-observacao" name="observacao" value={novoItem.observacao} onChange={handleNovoItemInputChange} rows={2} className={inputStyle} placeholder="Ex: Contém glúten" />
+              <div className="mb-6">
+                <label htmlFor="observacao_novo" className="block text-sm font-medium text-gray-700 mb-1">Observação</label>
+                <textarea 
+                  name="observacao" 
+                  id="observacao_novo" 
+                  value={novoItem.observacao || ''} 
+                  onChange={handleNovoItemInputChange} 
+                  rows={2} 
+                  className="w-full p-2.5 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-500 focus:border-pink-500 transition-colors"
+                />
               </div>
-              <div className="flex justify-end space-x-3 pt-5 border-t border-gray-200 mt-6">
-                <button type="button" onClick={() => setIsAddModalOpen(false)} disabled={saving} className={secondaryButtonStyle}>
-                  Cancelar
+              <div className="flex justify-end space-x-3">
+                <button 
+                  type="button" 
+                  onClick={() => setIsAddModalOpen(false)} 
+                  disabled={saving} 
+                  className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg transition-colors flex items-center"
+                >
+                  <XCircle size={18} className="mr-1"/> Cancelar
                 </button>
-                <button type="submit" disabled={saving} className={greenButtonStyle}>
-                  {saving ? <Loader2 size={18} className="mr-1 animate-spin" /> : <PlusCircle size={18} className="mr-1" />}
-                  {saving ? 'Adicionando...' : 'Adicionar Item'}
+                <button 
+                  type="submit" 
+                  disabled={saving} 
+                  className="px-4 py-2 bg-pink-500 hover:bg-pink-600 text-white rounded-lg shadow transition-colors flex items-center"
+                >
+                  {saving ? <Loader2 size={18} className="mr-1 animate-spin"/> : <Save size={18} className="mr-1"/>}
+                  {saving ? 'Salvando...' : 'Salvar Novo Item'}
                 </button>
               </div>
             </form>
@@ -725,33 +574,339 @@ const CardapioPage: React.FC = () => {
         </div>
       )}
 
-      {/* Delete Confirmation Modal */} 
-      {isConfirmDeleteModalOpen && (
-        <div className={modalOverlayStyle}>
-          <div className={`${modalContentStyle} max-w-md`}>
+      {isConfirmDeleteModalOpen && itemToDelete && (
+         <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+          <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md">
             <div className="text-center">
-              <AlertTriangle size={40} className="text-red-500 mx-auto mb-4" />
-              <h3 className="text-lg font-semibold mb-2 text-gray-900">Confirmar Exclusão</h3>
-              <p className="text-sm text-gray-600 mb-6">
-                Tem certeza que deseja excluir "<strong>{itemToDelete?.nome_produto || 'este item'}</strong>"?
-                <br />Esta ação não pode ser desfeita.
-              </p>
+                <AlertTriangle size={48} className="text-red-500 mx-auto mb-4" />
+                <h3 className="text-xl font-semibold mb-3 text-gray-800">Confirmar Remoção</h3>
+                <p className="text-gray-600 mb-6">
+                  Você tem certeza que deseja remover o item "<strong>{itemToDelete.nome_produto}</strong>"?
+                  <br/>Esta ação não poderá ser desfeita.
+                </p>
             </div>
-            <div className="flex justify-center space-x-3">
-              <button onClick={() => setIsConfirmDeleteModalOpen(false)} disabled={saving} className={secondaryButtonStyle}>
+            <div className="flex justify-center space-x-4">
+              <button 
+                onClick={() => setIsConfirmDeleteModalOpen(false)} 
+                disabled={saving} 
+                className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg transition-colors"
+              >
                 Cancelar
               </button>
-              <button onClick={handleDeleteItem} disabled={saving} className={dangerButtonStyle}>
-                {saving ? <Loader2 size={18} className="mr-1 animate-spin" /> : <Trash2 size={18} className="mr-1" />}
-                {saving ? 'Excluindo...' : 'Sim, Excluir'}
+              <button 
+                onClick={handleDeleteItem} 
+                disabled={saving} 
+                className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg shadow transition-colors flex items-center"
+              >
+                {saving ? <Loader2 size={18} className="mr-1 animate-spin"/> : <Trash2 size={18} className="mr-1"/>}
+                {saving ? 'Removendo...' : 'Confirmar Remoção'}
               </button>
             </div>
           </div>
         </div>
       )}
+
+      {itensCardapio.length === 0 && !loading && !error && (
+        <div className="text-center text-gray-500 mt-12">
+          <p className="text-2xl mb-2">Nenhum item no cardápio ainda.</p>
+          <p className="text-lg">Clique em "Adicionar Novo Item" para começar.</p>
+        </div>
+      )}
+      
+      {/* Exibir categorias na ordem especificada */}
+      {categoriasOrdenadas.map(categoria => {
+        const itens = categoriasMapeadas[categoria] || [];
+        if (itens.length === 0) return null;
+        
+        return (
+          <div key={categoria} className="mb-10">
+            <h3 className="text-2xl font-semibold text-gray-700 mb-4 pb-2 border-b border-gray-200">{categoria}</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {itens.map(item => (
+                <div 
+                  key={item.id} 
+                  className={`bg-white rounded-xl shadow-md hover:shadow-lg transition-all duration-200 overflow-hidden flex flex-col h-full ${
+                    item.isEditing ? 'ring-2 ring-pink-300' : ''
+                  }`}
+                >
+                  <div className="p-5 flex-grow flex flex-col">
+                    <div className="flex justify-between items-start mb-2">
+                      <h4 className="text-xl font-semibold text-gray-800 text-center w-full">
+                        {item.isEditing ? (
+                          <input 
+                            type="text" 
+                            value={item.nome_produto} 
+                            onChange={(e) => handleEditInputChange(item.id, 'nome_produto', e.target.value)} 
+                            className="w-full p-1.5 border border-gray-300 rounded focus:ring-2 focus:ring-pink-500 focus:border-pink-500 text-center"
+                          />
+                        ) : (
+                          item.nome_produto || "(Item sem nome)"
+                        )}
+                      </h4>
+                    </div>
+                    
+                    <div className="mb-3 flex justify-center">
+                      {item.isEditing ? (
+                        <select 
+                          value={item.disponivel ? 'Sim' : 'Não'} 
+                          onChange={(e) => handleEditInputChange(item.id, 'disponivel', e.target.value === 'Sim')} 
+                          className="p-1.5 border border-gray-300 rounded focus:ring-2 focus:ring-pink-500 focus:border-pink-500"
+                        >
+                          <option value="Sim">Disponível</option>
+                          <option value="Não">Indisponível</option>
+                        </select>
+                      ) : (
+                        <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                          item.disponivel 
+                            ? 'bg-green-100 text-green-800 border border-green-200' 
+                            : 'bg-red-100 text-red-800 border border-red-200'
+                        }`}>
+                          {item.disponivel ? 'Disponível' : 'Indisponível'}
+                        </span>
+                      )}
+                    </div>
+                    
+                    {item.isEditing ? (
+                      <div className="mb-3">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Categoria:</label>
+                        <select 
+                          value={item.categoria} 
+                          onChange={(e) => handleEditInputChange(item.id, 'categoria', e.target.value)} 
+                          className="w-full p-1.5 border border-gray-300 rounded focus:ring-2 focus:ring-pink-500 focus:border-pink-500"
+                        >
+                          {categoriasOrdenadas.map(cat => (
+                            <option key={cat} value={cat}>{cat}</option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : null}
+                    
+                    <div className="mb-3">
+                      <h5 className="text-sm font-medium text-gray-700 mb-1">Descrição:</h5>
+                      {item.isEditing ? (
+                        <textarea 
+                          value={item.descricao_produto || ''} 
+                          onChange={(e) => handleEditInputChange(item.id, 'descricao_produto', e.target.value)} 
+                          rows={2} 
+                          className="w-full p-1.5 border border-gray-300 rounded focus:ring-2 focus:ring-pink-500 focus:border-pink-500"
+                        />
+                      ) : (
+                        <p className="text-gray-600 text-justify">{item.descricao_produto || "Sem descrição"}</p>
+                      )}
+                    </div>
+                    
+                    <div className="mb-3">
+                      <h5 className="text-sm font-medium text-gray-700 mb-1">Promoções:</h5>
+                      {item.isEditing ? (
+                        <textarea 
+                          value={item.promocoes || ''} 
+                          onChange={(e) => handleEditInputChange(item.id, 'promocoes', e.target.value)} 
+                          rows={2} 
+                          className="w-full p-1.5 border border-gray-300 rounded focus:ring-2 focus:ring-pink-500 focus:border-pink-500"
+                        />
+                      ) : (
+                        <div className="bg-pink-50 border border-pink-200 text-pink-800 p-2 rounded text-justify">
+                          {item.promocoes || "Sem promoções"}
+                        </div>
+                      )}
+                    </div>
+                    
+                    {(item.observacao || item.isEditing) && (
+                      <div className="mb-3">
+                        <h5 className="text-sm font-medium text-gray-700 mb-1">Observação:</h5>
+                        {item.isEditing ? (
+                          <textarea 
+                            value={item.observacao || ''} 
+                            onChange={(e) => handleEditInputChange(item.id, 'observacao', e.target.value)} 
+                            rows={2} 
+                            className="w-full p-1.5 border border-gray-300 rounded focus:ring-2 focus:ring-pink-500 focus:border-pink-500"
+                          />
+                        ) : (
+                          <p className="text-gray-600 italic text-justify">{item.observacao}</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  
+                  <div className="p-4 border-t border-gray-100 bg-gray-50 mt-auto flex justify-center space-x-3">
+                    {item.isEditing ? (
+                      <button 
+                        onClick={() => toggleEditMode(item.id)} 
+                        className="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded transition-colors flex items-center"
+                      >
+                        <XCircle size={16} className="mr-1" /> Cancelar
+                      </button>
+                    ) : (
+                      <button 
+                        onClick={() => toggleEditMode(item.id)} 
+                        className="px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded shadow transition-colors flex items-center"
+                      >
+                        <Edit3 size={16} className="mr-1" /> Editar
+                      </button>
+                    )}
+                    <button 
+                      onClick={() => openDeleteConfirmationModal(item)} 
+                      className="px-3 py-1.5 bg-red-500 hover:bg-red-600 text-white rounded shadow transition-colors flex items-center"
+                    >
+                      <Trash2 size={16} className="mr-1" /> Excluir
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+      
+      {/* Exibir categorias não listadas em categoriasOrdenadas */}
+      {Object.keys(categoriasMapeadas)
+        .filter(categoria => !categoriasOrdenadas.includes(categoria))
+        .map(categoria => {
+          const itens = categoriasMapeadas[categoria];
+          if (!itens || itens.length === 0) return null;
+          
+          return (
+            <div key={categoria} className="mb-10">
+              <h3 className="text-2xl font-semibold text-gray-700 mb-4 pb-2 border-b border-gray-200">{categoria}</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {itens.map(item => (
+                  <div 
+                    key={item.id} 
+                    className={`bg-white rounded-xl shadow-md hover:shadow-lg transition-all duration-200 overflow-hidden flex flex-col h-full ${
+                      item.isEditing ? 'ring-2 ring-pink-300' : ''
+                    }`}
+                  >
+                    <div className="p-5 flex-grow flex flex-col">
+                      <div className="flex justify-between items-start mb-2">
+                        <h4 className="text-xl font-semibold text-gray-800 text-center w-full">
+                          {item.isEditing ? (
+                            <input 
+                              type="text" 
+                              value={item.nome_produto} 
+                              onChange={(e) => handleEditInputChange(item.id, 'nome_produto', e.target.value)} 
+                              className="w-full p-1.5 border border-gray-300 rounded focus:ring-2 focus:ring-pink-500 focus:border-pink-500 text-center"
+                            />
+                          ) : (
+                            item.nome_produto || "(Item sem nome)"
+                          )}
+                        </h4>
+                      </div>
+                      
+                      <div className="mb-3 flex justify-center">
+                        {item.isEditing ? (
+                          <select 
+                            value={item.disponivel ? 'Sim' : 'Não'} 
+                            onChange={(e) => handleEditInputChange(item.id, 'disponivel', e.target.value === 'Sim')} 
+                            className="p-1.5 border border-gray-300 rounded focus:ring-2 focus:ring-pink-500 focus:border-pink-500"
+                          >
+                            <option value="Sim">Disponível</option>
+                            <option value="Não">Indisponível</option>
+                          </select>
+                        ) : (
+                          <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                            item.disponivel 
+                              ? 'bg-green-100 text-green-800 border border-green-200' 
+                              : 'bg-red-100 text-red-800 border border-red-200'
+                          }`}>
+                            {item.disponivel ? 'Disponível' : 'Indisponível'}
+                          </span>
+                        )}
+                      </div>
+                      
+                      {item.isEditing ? (
+                        <div className="mb-3">
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Categoria:</label>
+                          <select 
+                            value={item.categoria} 
+                            onChange={(e) => handleEditInputChange(item.id, 'categoria', e.target.value)} 
+                            className="w-full p-1.5 border border-gray-300 rounded focus:ring-2 focus:ring-pink-500 focus:border-pink-500"
+                          >
+                            {categoriasOrdenadas.map(cat => (
+                              <option key={cat} value={cat}>{cat}</option>
+                            ))}
+                            <option value={categoria}>{categoria}</option>
+                          </select>
+                        </div>
+                      ) : null}
+                      
+                      <div className="mb-3">
+                        <h5 className="text-sm font-medium text-gray-700 mb-1">Descrição:</h5>
+                        {item.isEditing ? (
+                          <textarea 
+                            value={item.descricao_produto || ''} 
+                            onChange={(e) => handleEditInputChange(item.id, 'descricao_produto', e.target.value)} 
+                            rows={2} 
+                            className="w-full p-1.5 border border-gray-300 rounded focus:ring-2 focus:ring-pink-500 focus:border-pink-500"
+                          />
+                        ) : (
+                          <p className="text-gray-600 text-justify">{item.descricao_produto || "Sem descrição"}</p>
+                        )}
+                      </div>
+                      
+                      <div className="mb-3">
+                        <h5 className="text-sm font-medium text-gray-700 mb-1">Promoções:</h5>
+                        {item.isEditing ? (
+                          <textarea 
+                            value={item.promocoes || ''} 
+                            onChange={(e) => handleEditInputChange(item.id, 'promocoes', e.target.value)} 
+                            rows={2} 
+                            className="w-full p-1.5 border border-gray-300 rounded focus:ring-2 focus:ring-pink-500 focus:border-pink-500"
+                          />
+                        ) : (
+                          <div className="bg-pink-50 border border-pink-200 text-pink-800 p-2 rounded text-justify">
+                            {item.promocoes || "Sem promoções"}
+                          </div>
+                        )}
+                      </div>
+                      
+                      {(item.observacao || item.isEditing) && (
+                        <div className="mb-3">
+                          <h5 className="text-sm font-medium text-gray-700 mb-1">Observação:</h5>
+                          {item.isEditing ? (
+                            <textarea 
+                              value={item.observacao || ''} 
+                              onChange={(e) => handleEditInputChange(item.id, 'observacao', e.target.value)} 
+                              rows={2} 
+                              className="w-full p-1.5 border border-gray-300 rounded focus:ring-2 focus:ring-pink-500 focus:border-pink-500"
+                            />
+                          ) : (
+                            <p className="text-gray-600 italic text-justify">{item.observacao}</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    
+                    <div className="p-4 border-t border-gray-100 bg-gray-50 mt-auto flex justify-center space-x-3">
+                      {item.isEditing ? (
+                        <button 
+                          onClick={() => toggleEditMode(item.id)} 
+                          className="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded transition-colors flex items-center"
+                        >
+                          <XCircle size={16} className="mr-1" /> Cancelar
+                        </button>
+                      ) : (
+                        <button 
+                          onClick={() => toggleEditMode(item.id)} 
+                          className="px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded shadow transition-colors flex items-center"
+                        >
+                          <Edit3 size={16} className="mr-1" /> Editar
+                        </button>
+                      )}
+                      <button 
+                        onClick={() => openDeleteConfirmationModal(item)} 
+                        className="px-3 py-1.5 bg-red-500 hover:bg-red-600 text-white rounded shadow transition-colors flex items-center"
+                      >
+                        <Trash2 size={16} className="mr-1" /> Excluir
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
     </div>
   );
 };
 
 export default CardapioPage;
-

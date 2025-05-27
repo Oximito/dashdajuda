@@ -1,13 +1,19 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import "./App.css";
 import { supabase } from "./supabaseClient";
-import ComandaCard, { Pedido, StatusPedido, StatusPagamento } from "./components/ComandaCard"; // Importado StatusPedido, StatusPagamento
+// Removido import não utilizado de StatusPedido, StatusPagamento
+import ComandaCard, { Pedido } from "./components/ComandaCard";
 import CardapioPage from "./components/CardapioPage";
 import type { RealtimeChannel, RealtimePostgresChangesPayload } from "@supabase/supabase-js";
-import { AlertTriangle, Loader2, XCircle, Save, Trash2 } from "lucide-react"; // Adicionado XCircle, Save, Trash2
+import { AlertTriangle, Loader2, XCircle, Save, Trash2 } from "lucide-react";
 
-// Removido som de notificação conforme solicitado
-// const notificationSound = "/assets/sounds/notify.mp3";
+// Definindo tipos aqui para uso no App.tsx e modais
+type StatusPedido = "Aguardando" | "Em preparo" | "Pronto" | "Enviado" | "Entregue";
+type StatusPagamento = "Pago" | "Aguardando pagamento";
+
+// Movendo opções para cá para uso no modal de edição
+const statusOptions: StatusPedido[] = ["Aguardando", "Em preparo", "Pronto", "Enviado", "Entregue"];
+const pagamentoOptions: StatusPagamento[] = ["Aguardando pagamento", "Pago"];
 
 type View = "comandas" | "cardapio";
 
@@ -20,7 +26,7 @@ interface ConfirmModalProps {
   onClose: () => void;
   onConfirm: () => void;
   title: string;
-  message: React.ReactNode; // Permite JSX na mensagem
+  message: React.ReactNode;
   confirmText?: string;
   cancelText?: string;
   isSaving?: boolean;
@@ -80,7 +86,7 @@ const EditComandaModal: React.FC<EditComandaModalProps> = ({
 
   useEffect(() => {
     if (pedido) {
-      setEditedPedido({ ...pedido }); // Clona o pedido para edição local
+      setEditedPedido({ ...pedido });
     } else {
       setEditedPedido(null);
     }
@@ -126,7 +132,7 @@ const EditComandaModal: React.FC<EditComandaModalProps> = ({
               value={editedPedido.comanda || ''}
               onChange={handleInputChange}
               required
-              rows={8} // Aumentado para melhor visualização
+              rows={8}
               className={formFieldClasses}
             />
           </div>
@@ -140,7 +146,8 @@ const EditComandaModal: React.FC<EditComandaModalProps> = ({
               required
               className={formFieldClasses}
             >
-              {ComandaCard.statusOptions.map(option => (
+              {/* Usando as opções definidas no escopo do App */}
+              {statusOptions.map(option => (
                 <option key={option} value={option}>{option}</option>
               ))}
             </select>
@@ -155,7 +162,8 @@ const EditComandaModal: React.FC<EditComandaModalProps> = ({
               required
               className={formFieldClasses}
             >
-              {ComandaCard.pagamentoOptions.map(option => (
+              {/* Usando as opções definidas no escopo do App */}
+              {pagamentoOptions.map(option => (
                 <option key={option} value={option}>{option}</option>
               ))}
             </select>
@@ -175,29 +183,25 @@ const EditComandaModal: React.FC<EditComandaModalProps> = ({
   );
 };
 
-// Adiciona as opções estáticas ao componente ComandaCard para acesso no App.tsx
-ComandaCard.statusOptions = ["Aguardando", "Em preparo", "Pronto", "Enviado", "Entregue"];
-ComandaCard.pagamentoOptions = ["Aguardando pagamento", "Pago"];
+// Removida atribuição de opções estáticas ao ComandaCard
+// ComandaCard.statusOptions = ["Aguardando", "Em preparo", "Pronto", "Enviado", "Entregue"];
+// ComandaCard.pagamentoOptions = ["Aguardando pagamento", "Pago"];
 
 function App() {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [newPedidoKeys, setNewPedidoKeys] = useState<Set<string>>(new Set());
-  // const audioPlayer = useRef<HTMLAudioElement | null>(null); // Removido
   const channelRef = useRef<RealtimeChannel | null>(null);
   const [currentView, setCurrentView] = useState<View>("comandas");
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const retryCountRef = useRef<number>(0);
   const [isConnecting, setIsConnecting] = useState<boolean>(false);
 
-  // Estados para os modais
   const [isEditModalOpen, setIsEditModalOpen] = useState<boolean>(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState<boolean>(false);
   const [pedidoParaEditar, setPedidoParaEditar] = useState<Pedido | null>(null);
   const [pedidoParaDeletar, setPedidoParaDeletar] = useState<Pedido | null>(null);
-  const [isSavingModal, setIsSavingModal] = useState<boolean>(false); // Para indicar loading nos modais
-
-  // Removida função playNotificationSound
+  const [isSavingModal, setIsSavingModal] = useState<boolean>(false);
 
   const fetchPedidos = useCallback(async (source?: string, isNewInsert: boolean = false, insertedKey?: string) => {
     console.log(`[App] Buscando pedidos... (Origem: ${source || "desconhecida"})`);
@@ -217,7 +221,6 @@ function App() {
       if (isNewInsert && insertedKey) {
         console.log("[App] Novo pedido inserido, destacando:", insertedKey);
         if (!pedidos.some(p => p.telefone_key === insertedKey)) {
-            // playNotificationSound(); // Removido
             setNewPedidoKeys(prev => new Set(prev).add(insertedKey));
             setTimeout(() => {
               setNewPedidoKeys(prev => {
@@ -253,8 +256,6 @@ function App() {
       { event: "*", schema: "public", table: "Comandas" },
       (payload: RealtimePostgresChangesPayload<{[key: string]: any}>) => {
         console.log("[App] Mudança recebida do Supabase Realtime (Comandas)!", payload);
-        // Atualiza a lista inteira em qualquer mudança para simplicidade
-        // Poderia ser otimizado para atualizar/inserir/remover apenas o item afetado
         fetchPedidos("realtime update");
       }
     ).subscribe((status: "SUBSCRIBED" | "TIMED_OUT" | "CLOSED" | "CHANNEL_ERROR", err?: Error) => {
@@ -299,8 +300,6 @@ function App() {
         fetchPedidos("view change");
         setupComandasRealtimeSubscription();
 
-        // Removida configuração do audioPlayer
-
         return () => {
           console.log("[App] Saindo da view Comandas ou desmontando App, removendo canal Realtime.");
           if (retryTimeoutRef.current) {
@@ -312,7 +311,6 @@ function App() {
               .catch(console.error);
             channelRef.current = null;
           }
-          // Removida limpeza do audioPlayer
         };
     } else {
         console.log("[App] View mudou para Cardápio, garantindo remoção do canal Realtime (Comandas).");
@@ -331,13 +329,10 @@ function App() {
     }
   }, [currentView, fetchPedidos, setupComandasRealtimeSubscription]);
 
-  // Callback para atualização de status/pagamento vindo do ComandaCard
   const handlePedidoUpdate = () => {
     console.log("[App] Atualização de status/pagamento individual concluída, re-buscando todos os pedidos.");
     fetchPedidos("single update callback");
   };
-
-  // --- Funções para Editar e Excluir Comandas ---
 
   const handleOpenEditModal = (pedido: Pedido) => {
     setPedidoParaEditar(pedido);
@@ -369,7 +364,7 @@ function App() {
     } else {
       alert("Comanda atualizada com sucesso!");
       handleCloseEditModal();
-      fetchPedidos("after edit save"); // Atualiza a lista
+      fetchPedidos("after edit save");
     }
   };
 
@@ -398,11 +393,9 @@ function App() {
     } else {
       alert("Comanda excluída com sucesso!");
       handleCloseDeleteModal();
-      fetchPedidos("after delete"); // Atualiza a lista
+      fetchPedidos("after delete");
     }
   };
-
-  // --- Renderização ---
 
   return (
     <div className="p-6 bg-gray-50 min-h-screen font-sans">
@@ -466,9 +459,9 @@ function App() {
               <ComandaCard
                 key={pedido.telefone_key}
                 pedido={pedido}
-                onUpdate={handlePedidoUpdate} // Para status/pagamento
-                onEdit={handleOpenEditModal}   // Para abrir modal de edição
-                onDelete={handleOpenDeleteModal} // Para abrir modal de exclusão
+                onUpdate={handlePedidoUpdate}
+                onEdit={handleOpenEditModal}
+                onDelete={handleOpenDeleteModal}
                 isNew={newPedidoKeys.has(pedido.telefone_key)}
               />
             ))}
@@ -480,7 +473,6 @@ function App() {
         <CardapioPage />
       )}
 
-      {/* Modais de Edição e Exclusão */}
       <EditComandaModal
         isOpen={isEditModalOpen}
         onClose={handleCloseEditModal}

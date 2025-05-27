@@ -362,67 +362,69 @@ function App() {
                       className="input-field" // Usando classe global
                     />
                   </div>
-                  {/* Campo Comanda */}
+
+                  {/* Campo Comanda (Detalhes do Pedido) */}
                   <div>
-                    <label htmlFor="edit-comanda" className="label-style">Comanda</label>
+                    <label htmlFor="edit-comanda" className="label-style">Comanda (Detalhes)</label>
                     <textarea 
                       id="edit-comanda"
                       name="comanda"
                       value={editedPedido.comanda || ''}
                       onChange={handleEditInputChange}
-                      className="input-field" // Usando classe global
-                      rows={6} // Aumentando linhas para melhor visualização
+                      className="input-field h-32 resize-none" // Altura fixa, sem resize
                     />
                   </div>
-                  {/* Campo Status Pedido */}
+
+                  {/* Campo Status do Pedido */}
                   <div>
-                    <label htmlFor="edit-status_pedido" className="label-style">Status Pedido</label>
+                    <label htmlFor="edit-status_pedido" className="label-style">Status do Pedido</label>
                     <select 
                       id="edit-status_pedido"
                       name="status_pedido"
                       value={editedPedido.status_pedido || 'Aguardando'}
                       onChange={handleEditInputChange}
-                      className="input-field" // Usando classe global
+                      className="input-field"
                     >
-                      {statusOptions.map(option => (
-                        <option key={option} value={option}>{option}</option>
+                      {statusOptions.map(status => (
+                        <option key={status} value={status}>{status}</option>
                       ))}
                     </select>
                   </div>
-                  {/* Campo Status Pagamento */}
+
+                  {/* Campo Status do Pagamento */}
                   <div>
-                    <label htmlFor="edit-pagamento" className="label-style">Status Pagamento</label>
+                    <label htmlFor="edit-pagamento" className="label-style">Status do Pagamento</label>
                     <select 
                       id="edit-pagamento"
                       name="pagamento"
                       value={editedPedido.pagamento || 'Aguardando pagamento'}
                       onChange={handleEditInputChange}
-                      className="input-field" // Usando classe global
+                      className="input-field"
                     >
-                      {pagamentoOptions.map(option => (
-                        <option key={option} value={option}>{option}</option>
+                      {pagamentoOptions.map(status => (
+                        <option key={status} value={status}>{status}</option>
                       ))}
                     </select>
                   </div>
                 </div>
-                
+
                 {/* Rodapé Fixo do Modal com Botões */}
-                <div className="p-4 bg-gray-50 border-t border-gray-200 flex justify-end space-x-3 rounded-b-xl">
+                <div className="p-4 bg-gray-50 border-t border-gray-200 flex justify-end space-x-3 rounded-b-xl sticky bottom-0">
                   <button 
                     type="button" 
                     onClick={() => setIsEditModalOpen(false)} 
                     disabled={saving}
                     className="btn-secondary" // Usando classe global
                   >
-                    <XCircle size={18} className="inline mr-1"/> Cancelar
+                    <XCircle size={18} className="mr-1"/> Cancelar
                   </button>
                   <button 
                     type="button" 
                     onClick={handleSaveEdit} 
                     disabled={saving}
-                    className="btn-primary bg-blue-600 hover:bg-blue-700 focus:ring-blue-400" // Usando classe global (azul para salvar)
+                    className="btn-primary bg-blue-600 hover:bg-blue-700 focus:ring-blue-400" // Usando classe global com cor específica
                   >
-                    {saving ? <Loader2 size={18} className="inline mr-1 animate-spin"/> : <Save size={18} className="inline mr-1"/>}
+                    {saving ? <Loader2 size={18} className="mr-1 animate-spin"/> : <Save size={18} className="mr-1"/>}
                     {saving ? 'Salvando...' : 'Salvar Alterações'}
                   </button>
                 </div>
@@ -430,15 +432,15 @@ function App() {
             </div>
           )}
 
-          {/* Modal de Confirmação de Exclusão - Estilo Mantido */}
+          {/* Modal de Exclusão de Comanda - Estilo Mantido */}
           {isDeleteModalOpen && currentPedido && (
             <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
               <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md">
                 <div className="text-center">
                     <AlertTriangle size={48} className="text-red-500 mx-auto mb-4" />
-                    <h3 className="text-xl font-semibold mb-3 text-gray-800">Confirmar Remoção</h3>
+                    <h3 className="text-xl font-semibold mb-3 text-gray-800">Confirmar Exclusão</h3>
                     <p className="text-gray-600 mb-6">
-                      Você tem certeza que deseja remover o pedido de "<strong>{currentPedido.nome_cliente || currentPedido.telefone_key}</strong>"?
+                      Você tem certeza que deseja excluir o pedido de "<strong>{currentPedido.nome_cliente || currentPedido.telefone_key}</strong>"?
                       <br/>Esta ação não poderá ser desfeita.
                     </p>
                 </div>
@@ -448,7 +450,7 @@ function App() {
                   </button>
                   <button onClick={handleDeletePedido} disabled={saving} className="btn-danger">
                     {saving ? <Loader2 size={18} className="inline mr-1 animate-spin"/> : <Trash2 size={18} className="inline mr-1"/>}
-                    {saving ? 'Removendo...' : 'Confirmar Remoção'}
+                    {saving ? 'Excluindo...' : 'Confirmar Exclusão'}
                   </button>
                 </div>
               </div>

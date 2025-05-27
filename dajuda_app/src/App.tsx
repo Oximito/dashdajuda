@@ -1,226 +1,65 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import "./App.css";
 import { supabase } from "./supabaseClient";
-// Removido import não utilizado de StatusPedido, StatusPagamento
 import ComandaCard, { Pedido } from "./components/ComandaCard";
 import CardapioPage from "./components/CardapioPage";
-import type { RealtimeChannel, RealtimePostgresChangesPayload } from "@supabase/supabase-js";
-import { AlertTriangle, Loader2, XCircle, Save, Trash2 } from "lucide-react";
+import type { RealtimeChannel } from "@supabase/supabase-js";
+import { AlertTriangle, Loader2, X, Save, Edit3, Trash2 } from "lucide-react";
 
-// Definindo tipos aqui para uso no App.tsx e modais
-type StatusPedido = "Aguardando" | "Em preparo" | "Pronto" | "Enviado" | "Entregue";
-type StatusPagamento = "Pago" | "Aguardando pagamento";
-
-// Movendo opções para cá para uso no modal de edição
-const statusOptions: StatusPedido[] = ["Aguardando", "Em preparo", "Pronto", "Enviado", "Entregue"];
-const pagamentoOptions: StatusPagamento[] = ["Aguardando pagamento", "Pago"];
+const notificationSound = "/assets/sounds/notify.mp3";
 
 type View = "comandas" | "cardapio";
-
-const MAX_RETRIES = 5;
-const INITIAL_RETRY_DELAY = 5000; // 5 segundos
-
-// Componente Modal Genérico para Confirmação
-interface ConfirmModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  onConfirm: () => void;
-  title: string;
-  message: React.ReactNode;
-  confirmText?: string;
-  cancelText?: string;
-  isSaving?: boolean;
-}
-
-const ConfirmModal: React.FC<ConfirmModalProps> = ({
-  isOpen,
-  onClose,
-  onConfirm,
-  title,
-  message,
-  confirmText = "Confirmar",
-  cancelText = "Cancelar",
-  isSaving = false,
-}) => {
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-      <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md">
-        <div className="text-center">
-          <AlertTriangle size={48} className="text-red-500 mx-auto mb-4" />
-          <h3 className="text-xl font-semibold mb-3 text-gray-800">{title}</h3>
-          <div className="text-gray-600 mb-6">{message}</div>
-        </div>
-        <div className="flex justify-center space-x-4">
-          <button onClick={onClose} disabled={isSaving} className="btn-secondary">
-            {cancelText}
-          </button>
-          <button onClick={onConfirm} disabled={isSaving} className="btn-danger">
-            {isSaving ? <Loader2 size={18} className="inline mr-1 animate-spin" /> : <Trash2 size={18} className="inline mr-1" />}
-            {isSaving ? "Processando..." : confirmText}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// Componente Modal para Edição de Comanda
-interface EditComandaModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  onSave: (pedidoEditado: Pedido) => Promise<void>;
-  pedido: Pedido | null;
-  isSaving?: boolean;
-}
-
-const EditComandaModal: React.FC<EditComandaModalProps> = ({
-  isOpen,
-  onClose,
-  onSave,
-  pedido,
-  isSaving = false,
-}) => {
-  const [editedPedido, setEditedPedido] = useState<Pedido | null>(null);
-
-  useEffect(() => {
-    if (pedido) {
-      setEditedPedido({ ...pedido });
-    } else {
-      setEditedPedido(null);
-    }
-  }, [pedido]);
-
-  if (!isOpen || !editedPedido) return null;
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
-    const { name, value } = e.target;
-    setEditedPedido(prev => prev ? { ...prev, [name]: value } : null);
-  };
-
-  const handleSaveClick = async () => {
-    if (editedPedido) {
-      await onSave(editedPedido);
-    }
-  };
-
-  const formFieldClasses = "block w-full p-2 border-2 border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-1 focus:ring-pink-500 focus:border-pink-500 text-sm bg-white";
-
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-      <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-        <h3 className="text-2xl font-semibold mb-6 text-gray-800">Editar Comanda</h3>
-        <form onSubmit={(e) => { e.preventDefault(); handleSaveClick(); }}>
-          <div className="mb-4">
-            <label htmlFor="nome_cliente_edit" className="block text-sm font-medium text-gray-700 mb-1">Nome do Cliente</label>
-            <input
-              type="text"
-              name="nome_cliente"
-              id="nome_cliente_edit"
-              value={editedPedido.nome_cliente || ''}
-              onChange={handleInputChange}
-              required
-              className={formFieldClasses}
-            />
-          </div>
-          <div className="mb-4">
-            <label htmlFor="comanda_edit" className="block text-sm font-medium text-gray-700 mb-1">Comanda Detalhada</label>
-            <textarea
-              name="comanda"
-              id="comanda_edit"
-              value={editedPedido.comanda || ''}
-              onChange={handleInputChange}
-              required
-              rows={8}
-              className={formFieldClasses}
-            />
-          </div>
-          <div className="mb-4">
-            <label htmlFor="status_pedido_edit" className="block text-sm font-medium text-gray-700 mb-1">Status do Pedido</label>
-            <select
-              name="status_pedido"
-              id="status_pedido_edit"
-              value={editedPedido.status_pedido}
-              onChange={handleInputChange}
-              required
-              className={formFieldClasses}
-            >
-              {/* Usando as opções definidas no escopo do App */}
-              {statusOptions.map(option => (
-                <option key={option} value={option}>{option}</option>
-              ))}
-            </select>
-          </div>
-          <div className="mb-6">
-            <label htmlFor="pagamento_edit" className="block text-sm font-medium text-gray-700 mb-1">Status do Pagamento</label>
-            <select
-              name="pagamento"
-              id="pagamento_edit"
-              value={editedPedido.pagamento}
-              onChange={handleInputChange}
-              required
-              className={formFieldClasses}
-            >
-              {/* Usando as opções definidas no escopo do App */}
-              {pagamentoOptions.map(option => (
-                <option key={option} value={option}>{option}</option>
-              ))}
-            </select>
-          </div>
-          <div className="flex justify-end space-x-3">
-            <button type="button" onClick={onClose} disabled={isSaving} className="btn-secondary">
-              <XCircle size={18} className="inline mr-1" /> Cancelar
-            </button>
-            <button type="submit" disabled={isSaving} className="btn-primary bg-blue-500 hover:bg-blue-600">
-              {isSaving ? <Loader2 size={18} className="inline mr-1 animate-spin" /> : <Save size={18} className="inline mr-1" />}
-              {isSaving ? 'Salvando...' : 'Salvar Alterações'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-};
-
-// Removida atribuição de opções estáticas ao ComandaCard
-// ComandaCard.statusOptions = ["Aguardando", "Em preparo", "Pronto", "Enviado", "Entregue"];
-// ComandaCard.pagamentoOptions = ["Aguardando pagamento", "Pago"];
 
 function App() {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [newPedidoKeys, setNewPedidoKeys] = useState<Set<string>>(new Set());
+  const audioPlayer = useRef<HTMLAudioElement | null>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
   const [currentView, setCurrentView] = useState<View>("comandas");
-  const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const retryCountRef = useRef<number>(0);
-  const [isConnecting, setIsConnecting] = useState<boolean>(false);
-
+  const [reconnecting, setReconnecting] = useState<boolean>(false);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectAttemptsRef = useRef<number>(0);
+  const MAX_RECONNECT_ATTEMPTS = 5;
+  const RECONNECT_DELAY = 3000; // 3 segundos
+  
+  // Modal de edição de comanda
   const [isEditModalOpen, setIsEditModalOpen] = useState<boolean>(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState<boolean>(false);
-  const [pedidoParaEditar, setPedidoParaEditar] = useState<Pedido | null>(null);
-  const [pedidoParaDeletar, setPedidoParaDeletar] = useState<Pedido | null>(null);
-  const [isSavingModal, setIsSavingModal] = useState<boolean>(false);
+  const [currentPedido, setCurrentPedido] = useState<Pedido | null>(null);
+  const [editedPedido, setEditedPedido] = useState<Partial<Pedido>>({});
+  const [saving, setSaving] = useState<boolean>(false);
 
-  const fetchPedidos = useCallback(async (source?: string, isNewInsert: boolean = false, insertedKey?: string) => {
-    console.log(`[App] Buscando pedidos... (Origem: ${source || "desconhecida"})`);
+  const statusOptions: string[] = ["Aguardando", "Em preparo", "Pronto", "Enviado", "Entregue"];
+  const pagamentoOptions: string[] = ["Aguardando pagamento", "Pago"];
+
+  const playNotificationSound = () => {
+    if (audioPlayer.current) {
+      audioPlayer.current.play().catch(e => console.error("Erro ao tocar som de notificação:", e));
+    }
+  };
+
+  const fetchPedidos = async (isNewInsert: boolean = false, insertedKey?: string) => {
+    console.log("Buscando pedidos...");
     const { data, error: fetchError } = await supabase
       .from("Comandas")
       .select("*, hora_criacao_pedido")
       .order("hora_criacao_pedido", { ascending: false });
 
     if (fetchError) {
-      console.error("[App] Erro ao buscar pedidos:", fetchError);
+      console.error("Erro ao buscar pedidos:", fetchError);
+      setError(`Falha ao carregar pedidos: ${fetchError.message}`);
       setPedidos([]);
     } else {
       const fetchedPedidos = data as Pedido[];
-      console.log("[App] Pedidos buscados:", fetchedPedidos.length);
+      console.log("Pedidos buscados:", fetchedPedidos);
       setPedidos(fetchedPedidos);
+      setError(null);
 
       if (isNewInsert && insertedKey) {
-        console.log("[App] Novo pedido inserido, destacando:", insertedKey);
-        if (!pedidos.some(p => p.telefone_key === insertedKey)) {
+        console.log("Novo pedido inserido, tocando som e destacando:", insertedKey);
+        if (!pedidos.find(p => p.telefone_key === insertedKey)) {
+            playNotificationSound();
             setNewPedidoKeys(prev => new Set(prev).add(insertedKey));
             setTimeout(() => {
               setNewPedidoKeys(prev => {
@@ -232,190 +71,203 @@ function App() {
         }
       }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  };
 
-  const setupComandasRealtimeSubscription = useCallback(() => {
+  // Função para configurar o canal Realtime
+  const setupRealtimeChannel = useCallback(() => {
     if (channelRef.current) {
-      supabase.removeChannel(channelRef.current).catch(console.error);
+      supabase.removeChannel(channelRef.current)
+        .then(() => console.log('Canal Realtime (Comandas) removido antes de reconectar'))
+        .catch(console.error);
       channelRef.current = null;
     }
-    if (retryTimeoutRef.current) {
-        clearTimeout(retryTimeoutRef.current);
-        retryTimeoutRef.current = null;
+
+    const handleChanges = (payload: any) => {
+      console.log("Mudança recebida do Supabase Realtime (Comandas)!", payload);
+      if (payload.eventType === "INSERT" && payload.new.telefone_key) {
+        if (!pedidos.find(p => p.telefone_key === payload.new.telefone_key)){
+            fetchPedidos(true, payload.new.telefone_key as string);
+        } else {
+            fetchPedidos(); 
+        }
+      } else {
+        fetchPedidos();
+      }
+    };
+
+    channelRef.current = supabase
+      .channel("comandas_realtime_channel")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "Comandas" },
+        handleChanges
+      )
+      .subscribe((status, err) => {
+        if (status === "SUBSCRIBED") {
+          console.log("Conectado ao canal Realtime do Supabase (Comandas)!");
+          setError(null);
+          setReconnecting(false);
+          reconnectAttemptsRef.current = 0;
+        } else if (status === "CHANNEL_ERROR") {
+          console.error("Erro no canal Realtime do Supabase (Comandas):", err);
+          handleReconnect(err?.message || "Erro desconhecido");
+        } else if (status === "TIMED_OUT") {
+          console.warn("Timeout na conexão Realtime do Supabase (Comandas).");
+          handleReconnect("Timeout");
+        } else if (status === "CLOSED"){
+          console.log("Canal Realtime (Comandas) fechado.");
+          handleReconnect("CLOSED");
+        }
+      });
+  }, [pedidos]);
+
+  // Função para gerenciar reconexões
+  const handleReconnect = useCallback((errorMessage: string) => {
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
     }
 
-    console.log("[App] Tentando conectar ao canal Realtime (Comandas)...");
-    setIsConnecting(true);
-    setError(null);
-
-    const channel = supabase.channel("comandas_realtime_channel");
-
-    channel.on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "Comandas" },
-      (payload: RealtimePostgresChangesPayload<{[key: string]: any}>) => {
-        console.log("[App] Mudança recebida do Supabase Realtime (Comandas)!", payload);
-        fetchPedidos("realtime update");
-      }
-    ).subscribe((status: "SUBSCRIBED" | "TIMED_OUT" | "CLOSED" | "CHANNEL_ERROR", err?: Error) => {
-      setIsConnecting(false);
-      if (status === "SUBSCRIBED") {
-        console.log("[App] Conectado ao canal Realtime (Comandas)!");
-        setError(null);
-        retryCountRef.current = 0;
-        if (retryTimeoutRef.current) {
-            clearTimeout(retryTimeoutRef.current);
-            retryTimeoutRef.current = null;
-        }
-        fetchPedidos("after subscribe");
-      } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
-        console.error(`[App] Erro/Status no canal Realtime (Comandas): ${status}`, err);
-        setError(`Erro de conexão em tempo real (Comandas): ${status} - ${err?.message || "Tentando reconectar..."}`);
-        channelRef.current = null;
-
-        if (retryCountRef.current < MAX_RETRIES) {
-          const delay = INITIAL_RETRY_DELAY * Math.pow(2, retryCountRef.current);
-          console.log(`[App] Tentando reconectar Comandas em ${delay / 1000} segundos... (Tentativa ${retryCountRef.current + 1}/${MAX_RETRIES})`);
-          setIsConnecting(true);
-          retryTimeoutRef.current = setTimeout(() => {
-            retryCountRef.current++;
-            setupComandasRealtimeSubscription();
-          }, delay);
-        } else {
-          console.error("[App] Máximo de tentativas de reconexão (Comandas) atingido.");
-          setError("Falha ao reconectar ao serviço de atualizações em tempo real (Comandas) após múltiplas tentativas. Atualize manualmente.");
-          setIsConnecting(false);
-        }
-      }
-    });
-
-    channelRef.current = channel;
-
-  }, [fetchPedidos]);
+    if (reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
+      reconnectAttemptsRef.current += 1;
+      setReconnecting(true);
+      setError(`Erro de conexão em tempo real (Comandas): ${errorMessage} - Tentando reconectar...`);
+      
+      reconnectTimeoutRef.current = setTimeout(() => {
+        console.log(`Tentativa de reconexão ${reconnectAttemptsRef.current}/${MAX_RECONNECT_ATTEMPTS}...`);
+        setupRealtimeChannel();
+      }, RECONNECT_DELAY);
+    } else {
+      setReconnecting(false);
+      setError(`Erro de conexão em tempo real (Comandas): ${errorMessage} - Falha após ${MAX_RECONNECT_ATTEMPTS} tentativas. Atualize a página.`);
+    }
+  }, [setupRealtimeChannel]);
 
   useEffect(() => {
     if (currentView === "comandas") {
-        console.log("[App] View mudou para Comandas, iniciando fetch e Realtime.");
-        fetchPedidos("view change");
-        setupComandasRealtimeSubscription();
+        fetchPedidos();
+        setupRealtimeChannel();
+
+        audioPlayer.current = new Audio(notificationSound);
+        audioPlayer.current.load();
 
         return () => {
-          console.log("[App] Saindo da view Comandas ou desmontando App, removendo canal Realtime.");
-          if (retryTimeoutRef.current) {
-            clearTimeout(retryTimeoutRef.current);
+          if (reconnectTimeoutRef.current) {
+            clearTimeout(reconnectTimeoutRef.current);
           }
+          
           if (channelRef.current) {
             supabase.removeChannel(channelRef.current)
-              .then(status => console.log("[App] Canal Realtime (Comandas) removido no cleanup, status:", status))
+              .then(status => console.log("Canal Realtime (Comandas) removido, status:", status))
               .catch(console.error);
             channelRef.current = null;
           }
         };
     } else {
-        console.log("[App] View mudou para Cardápio, garantindo remoção do canal Realtime (Comandas).");
-        if (retryTimeoutRef.current) {
-            clearTimeout(retryTimeoutRef.current);
-        }
+        // Lógica para quando a view for 'cardapio', se necessário desativar o canal de comandas
         if (channelRef.current) {
             supabase.removeChannel(channelRef.current)
-              .then(status => console.log("[App] Canal Realtime (Comandas) removido ao mudar de view, status:", status))
+              .then(status => console.log("Canal Realtime (Comandas) removido ao mudar de view, status:", status))
               .catch(console.error);
             channelRef.current = null;
         }
-        setError(null);
-        setPedidos([]);
-        setNewPedidoKeys(new Set());
+        setError(null); // Limpar erros de comandas ao mudar de view
     }
-  }, [currentView, fetchPedidos, setupComandasRealtimeSubscription]);
+  }, [currentView, setupRealtimeChannel]);
 
   const handlePedidoUpdate = () => {
-    console.log("[App] Atualização de status/pagamento individual concluída, re-buscando todos os pedidos.");
-    fetchPedidos("single update callback");
+    console.log("Atualização de pedido individual concluída, re-buscando todos os pedidos para manter a ordem.");
+    fetchPedidos();
   };
 
-  const handleOpenEditModal = (pedido: Pedido) => {
-    setPedidoParaEditar(pedido);
+  // Funções para o modal de edição
+  const openEditModal = (pedido: Pedido) => {
+    setCurrentPedido(pedido);
+    setEditedPedido({
+      nome_cliente: pedido.nome_cliente,
+      comanda: pedido.comanda,
+      status_pedido: pedido.status_pedido,
+      pagamento: pedido.pagamento
+    });
     setIsEditModalOpen(true);
   };
 
-  const handleCloseEditModal = () => {
-    setIsEditModalOpen(false);
-    setPedidoParaEditar(null);
+  const handleEditInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+    const { name, value } = e.target;
+    setEditedPedido(prev => ({ ...prev, [name]: value }));
   };
 
-  const handleSaveEditedComanda = async (pedidoEditado: Pedido) => {
-    if (!pedidoParaEditar) return;
-    setIsSavingModal(true);
-    const { error: updateError } = await supabase
+  const handleSaveEdit = async () => {
+    if (!currentPedido) return;
+    
+    setSaving(true);
+    const { error } = await supabase
       .from("Comandas")
       .update({
-        nome_cliente: pedidoEditado.nome_cliente,
-        comanda: pedidoEditado.comanda,
-        status_pedido: pedidoEditado.status_pedido,
-        pagamento: pedidoEditado.pagamento,
+        nome_cliente: editedPedido.nome_cliente,
+        comanda: editedPedido.comanda,
+        status_pedido: editedPedido.status_pedido,
+        pagamento: editedPedido.pagamento
       })
-      .eq("telefone_key", pedidoParaEditar.telefone_key);
-
-    setIsSavingModal(false);
-    if (updateError) {
-      console.error("Erro ao salvar alterações da comanda:", updateError);
-      alert(`Erro ao salvar alterações: ${updateError.message}`);
+      .eq("telefone_key", currentPedido.telefone_key);
+    
+    setSaving(false);
+    
+    if (error) {
+      console.error("Erro ao atualizar comanda:", error);
+      alert(`Falha ao atualizar comanda: ${error.message}`);
     } else {
       alert("Comanda atualizada com sucesso!");
-      handleCloseEditModal();
-      fetchPedidos("after edit save");
+      setIsEditModalOpen(false);
+      fetchPedidos();
     }
   };
 
-  const handleOpenDeleteModal = (pedido: Pedido) => {
-    setPedidoParaDeletar(pedido);
+  // Funções para o modal de exclusão
+  const openDeleteModal = (pedido: Pedido) => {
+    setCurrentPedido(pedido);
     setIsDeleteModalOpen(true);
   };
 
-  const handleCloseDeleteModal = () => {
-    setIsDeleteModalOpen(false);
-    setPedidoParaDeletar(null);
-  };
-
-  const handleConfirmDeleteComanda = async () => {
-    if (!pedidoParaDeletar) return;
-    setIsSavingModal(true);
-    const { error: deleteError } = await supabase
+  const handleDeletePedido = async () => {
+    if (!currentPedido) return;
+    
+    setSaving(true);
+    const { error } = await supabase
       .from("Comandas")
       .delete()
-      .eq("telefone_key", pedidoParaDeletar.telefone_key);
-
-    setIsSavingModal(false);
-    if (deleteError) {
-      console.error("Erro ao excluir comanda:", deleteError);
-      alert(`Erro ao excluir comanda: ${deleteError.message}`);
+      .eq("telefone_key", currentPedido.telefone_key);
+    
+    setSaving(false);
+    
+    if (error) {
+      console.error("Erro ao excluir comanda:", error);
+      alert(`Falha ao excluir comanda: ${error.message}`);
     } else {
       alert("Comanda excluída com sucesso!");
-      handleCloseDeleteModal();
-      fetchPedidos("after delete");
+      setIsDeleteModalOpen(false);
+      fetchPedidos();
     }
   };
 
   return (
     <div className="p-6 bg-gray-50 min-h-screen font-sans">
       <header className="mb-10">
-        <h1 className="text-5xl font-bold text-center text-custom-pink">D’Ajuda Refeições</h1>
+        <h1 className="text-5xl font-bold text-center text-custom-pink">D'Ajuda Refeições</h1>
         <nav className="mt-4 mb-6 flex justify-center space-x-6">
-          <button
-            onClick={() => setCurrentView("comandas")}
-            className={`px-6 py-2 rounded-lg text-lg font-medium transition-colors
-                        ${currentView === "comandas"
-                          ? "bg-custom-pink text-white shadow-md"
+          <button 
+            onClick={() => setCurrentView("comandas")} 
+            className={`px-6 py-2 rounded-lg text-lg font-medium transition-colors 
+                        ${currentView === "comandas" 
+                          ? "bg-custom-pink text-white shadow-md" 
                           : "bg-gray-200 text-gray-700 hover:bg-gray-300"}`}
           >
             Pedidos
           </button>
-          <button
-            onClick={() => setCurrentView("cardapio")}
-            className={`px-6 py-2 rounded-lg text-lg font-medium transition-colors
-                        ${currentView === "cardapio"
-                          ? "bg-custom-pink text-white shadow-md"
+          <button 
+            onClick={() => setCurrentView("cardapio")} 
+            className={`px-6 py-2 rounded-lg text-lg font-medium transition-colors 
+                        ${currentView === "cardapio" 
+                          ? "bg-custom-pink text-white shadow-md" 
                           : "bg-gray-200 text-gray-700 hover:bg-gray-300"}`}
           >
             Cardápio
@@ -426,28 +278,25 @@ function App() {
       </header>
 
       {error && (
-        <div className="text-red-600 text-center mb-6 p-4 bg-red-100 rounded-lg shadow flex items-center justify-center">
-            <AlertTriangle size={20} className="mr-2" /> {error}
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg shadow-sm flex items-center justify-center">
+          <AlertTriangle size={20} className="mr-2" /> 
+          <span>{error}</span>
+          {reconnecting && <Loader2 size={20} className="animate-spin ml-2" />}
         </div>
       )}
-      {isConnecting && !error && currentView === "comandas" && (
-        <div className="text-blue-600 text-center mb-6 p-4 bg-blue-100 rounded-lg shadow flex items-center justify-center">
-            <Loader2 size={20} className="animate-spin mr-2" /> Conectando às atualizações em tempo real...
-        </div>
-      )}
-
+      
       {currentView === "comandas" && (
         <>
           <div className="text-center mb-8">
-            <button
-              onClick={() => fetchPedidos("manual refresh")}
+            <button 
+              onClick={() => fetchPedidos()} 
               className="px-7 py-3 bg-custom-pink text-white rounded-xl shadow-md hover:bg-pink-700 transition-colors focus:outline-none focus:ring-2 focus:ring-pink-500 focus:ring-opacity-60 text-lg font-medium"
             >
               Atualizar Pedidos Manualmente
             </button>
           </div>
 
-          {pedidos.length === 0 && !error && !isConnecting && (
+          {pedidos.length === 0 && !error && (
             <div className="text-center text-gray-500 mt-12">
               <p className="text-3xl mb-2">Nenhum pedido no momento.</p>
               <p className="text-xl">Aguardando novas comandas...</p>
@@ -456,16 +305,138 @@ function App() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
             {pedidos.map((pedido) => (
-              <ComandaCard
-                key={pedido.telefone_key}
-                pedido={pedido}
-                onUpdate={handlePedidoUpdate}
-                onEdit={handleOpenEditModal}
-                onDelete={handleOpenDeleteModal}
+              <ComandaCard 
+                key={pedido.telefone_key} 
+                pedido={pedido} 
+                onUpdate={handlePedidoUpdate} 
                 isNew={newPedidoKeys.has(pedido.telefone_key)}
+                onEdit={() => openEditModal(pedido)}
+                onDelete={() => openDeleteModal(pedido)}
               />
             ))}
           </div>
+
+          {/* Modal de Edição */}
+          {isEditModalOpen && currentPedido && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+              <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="text-2xl font-semibold text-gray-800">Editar Comanda</h3>
+                  <button 
+                    onClick={() => setIsEditModalOpen(false)}
+                    className="text-gray-500 hover:text-gray-700 transition-colors"
+                  >
+                    <X size={24} />
+                  </button>
+                </div>
+                
+                <div className="mb-4">
+                  <label htmlFor="nome_cliente" className="block text-sm font-medium text-gray-700 mb-1">Nome do Cliente</label>
+                  <input 
+                    type="text" 
+                    id="nome_cliente" 
+                    name="nome_cliente" 
+                    value={editedPedido.nome_cliente || ''} 
+                    onChange={handleEditInputChange}
+                    className="w-full p-2.5 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-500 focus:border-pink-500 transition-colors"
+                  />
+                </div>
+                
+                <div className="mb-4">
+                  <label htmlFor="comanda" className="block text-sm font-medium text-gray-700 mb-1">Texto da Comanda</label>
+                  <textarea 
+                    id="comanda" 
+                    name="comanda" 
+                    value={editedPedido.comanda || ''} 
+                    onChange={handleEditInputChange}
+                    rows={5}
+                    className="w-full p-2.5 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-500 focus:border-pink-500 transition-colors"
+                  />
+                </div>
+                
+                <div className="mb-4">
+                  <label htmlFor="status_pedido" className="block text-sm font-medium text-gray-700 mb-1">Status do Pedido</label>
+                  <select 
+                    id="status_pedido" 
+                    name="status_pedido" 
+                    value={editedPedido.status_pedido || ''} 
+                    onChange={handleEditInputChange}
+                    className="w-full p-2.5 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-500 focus:border-pink-500 transition-colors"
+                  >
+                    {statusOptions.map(option => (
+                      <option key={option} value={option}>{option}</option>
+                    ))}
+                  </select>
+                </div>
+                
+                <div className="mb-6">
+                  <label htmlFor="pagamento" className="block text-sm font-medium text-gray-700 mb-1">Status do Pagamento</label>
+                  <select 
+                    id="pagamento" 
+                    name="pagamento" 
+                    value={editedPedido.pagamento || ''} 
+                    onChange={handleEditInputChange}
+                    className="w-full p-2.5 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-500 focus:border-pink-500 transition-colors"
+                  >
+                    {pagamentoOptions.map(option => (
+                      <option key={option} value={option}>{option}</option>
+                    ))}
+                  </select>
+                </div>
+                
+                <div className="flex justify-end space-x-3">
+                  <button 
+                    onClick={() => setIsEditModalOpen(false)} 
+                    disabled={saving}
+                    className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                  <button 
+                    onClick={handleSaveEdit} 
+                    disabled={saving}
+                    className="px-4 py-2 bg-pink-500 hover:bg-pink-600 text-white rounded-lg shadow transition-colors flex items-center"
+                  >
+                    {saving ? <Loader2 size={18} className="mr-1 animate-spin"/> : <Save size={18} className="mr-1"/>}
+                    {saving ? 'Salvando...' : 'Salvar Alterações'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Modal de Exclusão */}
+          {isDeleteModalOpen && currentPedido && (
+            <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+              <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md">
+                <div className="text-center">
+                  <AlertTriangle size={48} className="text-red-500 mx-auto mb-4" />
+                  <h3 className="text-xl font-semibold mb-3 text-gray-800">Confirmar Exclusão</h3>
+                  <p className="text-gray-600 mb-6">
+                    Você tem certeza que deseja excluir a comanda de "<strong>{currentPedido.nome_cliente || currentPedido.telefone_key}</strong>"?
+                    <br/>Esta ação não poderá ser desfeita.
+                  </p>
+                </div>
+                <div className="flex justify-center space-x-4">
+                  <button 
+                    onClick={() => setIsDeleteModalOpen(false)} 
+                    disabled={saving}
+                    className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                  <button 
+                    onClick={handleDeletePedido} 
+                    disabled={saving}
+                    className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg shadow transition-colors flex items-center"
+                  >
+                    {saving ? <Loader2 size={18} className="mr-1 animate-spin"/> : <Trash2 size={18} className="mr-1"/>}
+                    {saving ? 'Excluindo...' : 'Confirmar Exclusão'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </>
       )}
 
@@ -473,32 +444,8 @@ function App() {
         <CardapioPage />
       )}
 
-      <EditComandaModal
-        isOpen={isEditModalOpen}
-        onClose={handleCloseEditModal}
-        onSave={handleSaveEditedComanda}
-        pedido={pedidoParaEditar}
-        isSaving={isSavingModal}
-      />
-
-      <ConfirmModal
-        isOpen={isDeleteModalOpen}
-        onClose={handleCloseDeleteModal}
-        onConfirm={handleConfirmDeleteComanda}
-        title="Confirmar Exclusão"
-        message={
-          <p>
-            Você tem certeza que deseja excluir a comanda de "<strong>{pedidoParaDeletar?.nome_cliente || pedidoParaDeletar?.telefone_key}</strong>"?
-            <br />Esta ação não poderá ser desfeita.
-          </p>
-        }
-        confirmText="Excluir Comanda"
-        isSaving={isSavingModal}
-      />
-
     </div>
   );
 }
 
 export default App;
-

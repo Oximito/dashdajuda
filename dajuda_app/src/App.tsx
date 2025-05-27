@@ -13,7 +13,7 @@ type View = "comandas" | "cardapio";
 // Função auxiliar para garantir que o objeto está em conformidade com a interface Pedido
 const ensurePedidoType = (data: any): Pedido => {
   return {
-    comanda: data.comanda || ".",
+    comanda: data.comanda || ".", // Garante que comanda não seja null/undefined
     telefone_key: data.telefone_key || "",
     nome_cliente: data.nome_cliente || "",
     status_pedido: data.status_pedido || "Aguardando",
@@ -122,6 +122,7 @@ function App() {
             }, 5000);
             return [...prevPedidos, novoPedido].sort((a, b) => new Date(b.hora_criacao_pedido).getTime() - new Date(a.hora_criacao_pedido).getTime());
           } else {
+            // Se já existe (caso raro de duplicação ou erro), apenas atualiza
             return prevPedidos.map(p => p.telefone_key === newKey ? novoPedido : p).sort((a, b) => new Date(b.hora_criacao_pedido).getTime() - new Date(a.hora_criacao_pedido).getTime());
           }
         });
@@ -150,9 +151,7 @@ function App() {
           handleReconnect(errorMsg);
         } else if (status === "CLOSED") {
           console.log("Canal Realtime (Comandas) fechado. Status:", status);
-          if (currentView === 'comandas' && !reconnecting) {
-            // Opcional: Logar warning ou tentar reconexão suave
-          }
+          // Não tenta reconectar automaticamente em CLOSED, pode ser intencional
         }
       });
   }, [currentView, handleReconnect]);
@@ -236,6 +235,7 @@ function App() {
     } else {
       alert("Comanda atualizada com sucesso!");
       setIsEditModalOpen(false);
+      // A atualização será refletida pelo Realtime
     }
   };
 
@@ -259,6 +259,7 @@ function App() {
     } else {
       alert("Comanda excluída com sucesso!");
       setIsDeleteModalOpen(false);
+      // A atualização será refletida pelo Realtime
     }
   };
 
@@ -336,9 +337,10 @@ function App() {
             ))}
           </div>
 
-          {/* **REFORMULAÇÃO: Modal de Edição de Comanda - Estilo "Apple"** */}
+          {/* **REFORMULAÇÃO FINAL: Modal de Edição de Comanda - Estilo "Apple"** */}
           {isEditModalOpen && currentPedido && (
             <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+              {/* Container do Modal */}
               <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg flex flex-col max-h-[90vh]">
                 {/* Cabeçalho do Modal */}
                 <div className="p-6 border-b border-gray-200">
@@ -348,6 +350,7 @@ function App() {
                 
                 {/* Conteúdo Rolável do Modal */}
                 <div className="p-6 overflow-y-auto flex-grow space-y-4"> 
+                  {/* Campo Nome do Cliente */}
                   <div>
                     <label htmlFor="edit-nome_cliente" className="label-style">Nome do Cliente</label>
                     <input 
@@ -356,9 +359,10 @@ function App() {
                       name="nome_cliente"
                       value={editedPedido.nome_cliente || ''}
                       onChange={handleEditInputChange}
-                      className="input-field" 
+                      className="input-field" // Usando classe global
                     />
                   </div>
+                  {/* Campo Comanda */}
                   <div>
                     <label htmlFor="edit-comanda" className="label-style">Comanda</label>
                     <textarea 
@@ -366,31 +370,34 @@ function App() {
                       name="comanda"
                       value={editedPedido.comanda || ''}
                       onChange={handleEditInputChange}
-                      className="input-field h-40 resize-none" // Altura fixa e sem resize
+                      className="input-field" // Usando classe global
+                      rows={6} // Aumentando linhas para melhor visualização
                     />
                   </div>
+                  {/* Campo Status Pedido */}
                   <div>
                     <label htmlFor="edit-status_pedido" className="label-style">Status Pedido</label>
                     <select 
                       id="edit-status_pedido"
                       name="status_pedido"
-                      value={editedPedido.status_pedido || ''}
+                      value={editedPedido.status_pedido || 'Aguardando'}
                       onChange={handleEditInputChange}
-                      className="input-field"
+                      className="input-field" // Usando classe global
                     >
                       {statusOptions.map(option => (
                         <option key={option} value={option}>{option}</option>
                       ))}
                     </select>
                   </div>
+                  {/* Campo Status Pagamento */}
                   <div>
                     <label htmlFor="edit-pagamento" className="label-style">Status Pagamento</label>
                     <select 
                       id="edit-pagamento"
                       name="pagamento"
-                      value={editedPedido.pagamento || ''}
+                      value={editedPedido.pagamento || 'Aguardando pagamento'}
                       onChange={handleEditInputChange}
-                      className="input-field"
+                      className="input-field" // Usando classe global
                     >
                       {pagamentoOptions.map(option => (
                         <option key={option} value={option}>{option}</option>
@@ -399,7 +406,7 @@ function App() {
                   </div>
                 </div>
                 
-                {/* Rodapé Fixo do Modal */}
+                {/* Rodapé Fixo do Modal com Botões */}
                 <div className="p-4 bg-gray-50 border-t border-gray-200 flex justify-end space-x-3 rounded-b-xl">
                   <button 
                     type="button" 
@@ -413,7 +420,7 @@ function App() {
                     type="button" 
                     onClick={handleSaveEdit} 
                     disabled={saving}
-                    className="btn-primary bg-blue-600 hover:bg-blue-700 focus:ring-blue-400" // Usando classe global, cor azul
+                    className="btn-primary bg-blue-600 hover:bg-blue-700 focus:ring-blue-400" // Usando classe global (azul para salvar)
                   >
                     {saving ? <Loader2 size={18} className="inline mr-1 animate-spin"/> : <Save size={18} className="inline mr-1"/>}
                     {saving ? 'Salvando...' : 'Salvar Alterações'}
@@ -423,15 +430,15 @@ function App() {
             </div>
           )}
 
-          {/* Modal de Exclusão de Comanda - Estilo mantido */}
+          {/* Modal de Confirmação de Exclusão - Estilo Mantido */}
           {isDeleteModalOpen && currentPedido && (
             <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
               <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md">
                 <div className="text-center">
                     <AlertTriangle size={48} className="text-red-500 mx-auto mb-4" />
-                    <h3 className="text-xl font-semibold mb-3 text-gray-800">Confirmar Exclusão</h3>
+                    <h3 className="text-xl font-semibold mb-3 text-gray-800">Confirmar Remoção</h3>
                     <p className="text-gray-600 mb-6">
-                      Você tem certeza que deseja excluir a comanda de "<strong>{currentPedido.nome_cliente || currentPedido.telefone_key}</strong>"?
+                      Você tem certeza que deseja remover o pedido de "<strong>{currentPedido.nome_cliente || currentPedido.telefone_key}</strong>"?
                       <br/>Esta ação não poderá ser desfeita.
                     </p>
                 </div>
@@ -441,7 +448,7 @@ function App() {
                   </button>
                   <button onClick={handleDeletePedido} disabled={saving} className="btn-danger">
                     {saving ? <Loader2 size={18} className="inline mr-1 animate-spin"/> : <Trash2 size={18} className="inline mr-1"/>}
-                    {saving ? 'Excluindo...' : 'Confirmar Exclusão'}
+                    {saving ? 'Removendo...' : 'Confirmar Remoção'}
                   </button>
                 </div>
               </div>

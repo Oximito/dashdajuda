@@ -206,15 +206,7 @@ function App() {
             setError(null); 
         }
     }
-  }, [currentView, fetchPedidos, setupRealtimeChannel]);
-
-  // Handler para atualização manual ou via card
-  const handlePedidoUpdate = () => {
-    console.log("Atualização de pedido individual concluída, re-buscando todos os pedidos.");
-    fetchPedidos('manual update or card action');
-  };
-
-  // Funções para o modal de edição
+  }, [currentView, fetchPedidos, setupRealtimeChannel]);// Funções para o modal de edição
   const openEditModal = (pedido: Pedido) => {
     setCurrentPedido(pedido);
     setEditedPedido({

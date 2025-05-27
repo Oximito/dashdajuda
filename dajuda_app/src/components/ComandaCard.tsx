@@ -65,7 +65,7 @@ const FormattedComanda: React.FC<{ comandaText: string }> = ({ comandaText }) =>
 };
 
 // Componente principal do Card da Comanda
-const ComandaCard: React.FC<ComandaCardProps> = ({ pedido, onUpdate, isNew, onEdit, onDelete }) => {
+const ComandaCard: React.FC<ComandaCardProps> = ({ pedido, isNew, onEdit, onDelete }) => {
   const [isUpdating, setIsUpdating] = useState(false);
   const [updateSuccess, setUpdateSuccess] = useState<boolean | null>(null);
   const [copySuccess, setCopySuccess] = useState<boolean>(false);
